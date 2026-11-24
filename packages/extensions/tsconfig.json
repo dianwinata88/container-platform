@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.json",
+  "include": ["src/**/*", "../core/types/*.d.ts"],
+  "exclude": ["node_modules", "../core/src/"],
+  "references": [
+    {
+      "path": "../core"
+    }
+  ]
+}

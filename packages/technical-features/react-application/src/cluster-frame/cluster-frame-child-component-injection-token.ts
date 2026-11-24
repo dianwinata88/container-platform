@@ -1,0 +1,20 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import { getInjectionToken } from "@ogre-tools/injectable";
+
+import type { IComputedValue } from "mobx";
+
+export interface ClusterFrameChildComponent {
+  id: string;
+  /** Rendered without props. */
+  Component: React.ComponentType;
+  shouldRender: IComputedValue<boolean>;
+}
+
+export const clusterFrameChildComponentInjectionToken = getInjectionToken<ClusterFrameChildComponent>({
+  id: "cluster-frame-child-component",
+});

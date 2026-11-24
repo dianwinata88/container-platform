@@ -1,0 +1,33 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import { loggerInjectionToken } from "@freelensapp/logger";
+import { getInjectable } from "@ogre-tools/injectable";
+import kubeconfigManagerInjectable from "../../kubeconfig-manager/kubeconfig-manager.injectable";
+import rollbackHelmReleaseInjectable from "../rollback-helm-release.injectable";
+
+import type { Cluster } from "../../../common/cluster/cluster";
+import type { RollbackHelmReleaseData } from "../rollback-helm-release.injectable";
+
+const rollbackClusterHelmReleaseInjectable = getInjectable({
+  id: "rollback-cluster-helm-release",
+
+  instantiate: (di) => {
+    const logger = di.inject(loggerInjectionToken);
+    const rollbackHelmRelease = di.inject(rollbackHelmReleaseInjectable);
+
+    return async (cluster: Cluster, data: RollbackHelmReleaseData) => {
+      const proxyKubeconfigManager = di.inject(kubeconfigManagerInjectable, cluster);
+      const proxyKubeconfig = await proxyKubeconfigManager.ensurePaths();
+
+      logger.debug(`[CLUSTER]: rolling back helm release for clusterId=${cluster.id}`, data);
+
+      await rollbackHelmRelease(proxyKubeconfig, data);
+    };
+  },
+});
+
+export default rollbackClusterHelmReleaseInjectable;

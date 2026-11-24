@@ -1,0 +1,57 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import { withInjectables } from "@ogre-tools/injectable-react";
+import { observer } from "mobx-react";
+import { SubHeader } from "../../../../../../renderer/components/layout/sub-header";
+import { SubTitle } from "../../../../../../renderer/components/layout/sub-title";
+import { Select } from "../../../../../../renderer/components/select";
+import { Switch } from "../../../../../../renderer/components/switch";
+import userPreferencesStateInjectable from "../../../../../user-preferences/common/state.injectable";
+
+import type { UserPreferencesState } from "../../../../../user-preferences/common/state.injectable";
+
+interface Dependencies {
+  state: UserPreferencesState;
+}
+
+const minimapPositionOptions = (["left", "right"] as const).map((side) => ({
+  value: side,
+  label: side,
+}));
+
+const NonInjectedMinimap = observer(({ state: { editorConfiguration } }: Dependencies) => (
+  <section>
+    <SubTitle title="Minimap" />
+
+    <div className="flex gap-2 justify-between">
+      <div className="flex gap-2 items-center">
+        <Switch
+          checked={editorConfiguration.minimap.enabled}
+          onChange={() => (editorConfiguration.minimap.enabled = !editorConfiguration.minimap.enabled)}
+        >
+          Show minimap
+        </Switch>
+      </div>
+      <div className="flex gap-2 items-center">
+        <SubHeader compact>Position</SubHeader>
+        <Select
+          id="minimap-input"
+          themeName="lens"
+          options={minimapPositionOptions}
+          value={editorConfiguration.minimap.side}
+          onChange={(option) => (editorConfiguration.minimap.side = option?.value)}
+        />
+      </div>
+    </div>
+  </section>
+));
+
+export const Minimap = withInjectables<Dependencies>(NonInjectedMinimap, {
+  getProps: (di) => ({
+    state: di.inject(userPreferencesStateInjectable),
+  }),
+});

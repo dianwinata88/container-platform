@@ -1,0 +1,26 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import { Pod } from "@freelensapp/kube-object";
+import { describe, expect, it } from "vitest";
+
+describe("Pod tests", () => {
+  it("getAllContainers() should never throw", () => {
+    const pod = new Pod({
+      apiVersion: "foo",
+      kind: "Pod",
+      metadata: {
+        name: "foobar",
+        resourceVersion: "foobar",
+        uid: "foobar",
+        namespace: "default",
+        selfLink: "/api/v1/pods/default/foobar",
+      },
+    });
+
+    expect(pod.getAllContainers()).toStrictEqual([]);
+  });
+});

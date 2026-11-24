@@ -1,0 +1,86 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import { getInjectable } from "@ogre-tools/injectable";
+import { withInjectables } from "@ogre-tools/injectable-react";
+import getClusterByIdInjectable from "../../../../features/cluster/storage/common/get-by-id.injectable";
+import { ClusterIconColorSetting, ClusterIconLabelSetting } from "../../cluster-settings/icon-appearance-setting";
+import { ClusterIconSetting } from "../../cluster-settings/icon-settings";
+import { ClusterKubeconfig } from "../../cluster-settings/kubeconfig";
+import { ClusterNameSetting } from "../../cluster-settings/name-setting";
+import { entitySettingInjectionToken } from "../token";
+
+import type { KubernetesCluster } from "../../../../common/catalog-entities";
+import type { GetClusterById } from "../../../../features/cluster/storage/common/get-by-id.injectable";
+import type { EntitySettingViewProps } from "../extension-registrator.injectable";
+
+interface Dependencies {
+  getClusterById: GetClusterById;
+}
+
+function NonInjectedGeneralKubernetesClusterSettings({
+  entity,
+  getClusterById,
+}: EntitySettingViewProps & Dependencies) {
+  const cluster = getClusterById(entity.getId());
+
+  if (!cluster) {
+    return null;
+  }
+
+  return (
+    <section>
+      <section>
+        <div className="flex gap-4">
+          <div className="flex-grow">
+            <ClusterNameSetting cluster={cluster} entity={entity as KubernetesCluster} />
+          </div>
+          <div className="w-16 shrink-0">
+            <ClusterIconLabelSetting cluster={cluster} entity={entity as KubernetesCluster} />
+          </div>
+          <div>
+            <ClusterIconSetting cluster={cluster} entity={entity as KubernetesCluster} />
+          </div>
+        </div>
+      </section>
+      <section className="mt-4">
+        <ClusterIconColorSetting cluster={cluster} entity={entity as KubernetesCluster} />
+      </section>
+      <section className="small">
+        <ClusterKubeconfig cluster={cluster} />
+      </section>
+    </section>
+  );
+}
+
+const GeneralKubernetesClusterSettings = withInjectables<Dependencies, EntitySettingViewProps>(
+  NonInjectedGeneralKubernetesClusterSettings,
+  {
+    getProps: (di, props) => ({
+      ...props,
+      getClusterById: di.inject(getClusterByIdInjectable),
+    }),
+  },
+);
+
+const generalKubernetesClusterEntitySettingsInjectable = getInjectable({
+  id: "general-kubernetes-cluster-entity-settings",
+  instantiate: () => ({
+    apiVersions: new Set(["entity.k8slens.dev/v1alpha1"]),
+    kind: "KubernetesCluster",
+    source: "local",
+    title: "General",
+    group: "Settings",
+    id: "general",
+    orderNumber: 0,
+    components: {
+      View: GeneralKubernetesClusterSettings,
+    },
+  }),
+  injectionToken: entitySettingInjectionToken,
+});
+
+export default generalKubernetesClusterEntitySettingsInjectable;

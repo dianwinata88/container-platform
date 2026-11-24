@@ -1,0 +1,65 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { getApplicationBuilder } from "../../renderer/components/test-utils/get-application-builder";
+import focusWindowInjectable from "../../renderer/navigation/focus-window.injectable";
+
+import type { RenderResult } from "@testing-library/react";
+import type { Mock } from "vitest";
+
+import type { ApplicationBuilder } from "../../renderer/components/test-utils/get-application-builder";
+
+// TODO: Make components free of side effects by making them deterministic
+vi.mock("../../renderer/components/input/input");
+
+describe("extensions - navigation using application menu", () => {
+  let builder: ApplicationBuilder;
+  let rendered: RenderResult;
+  let focusWindowMock: Mock;
+
+  beforeEach(async () => {
+    builder = getApplicationBuilder();
+
+    builder.beforeWindowStart(({ windowDi }) => {
+      focusWindowMock = vi.fn();
+
+      windowDi.override(focusWindowInjectable, () => focusWindowMock);
+    });
+
+    rendered = await builder.render();
+  });
+
+  it("renders", () => {
+    expect(rendered.container).toMatchSnapshot();
+  });
+
+  it("does not show extensions page yet", () => {
+    const actual = rendered.queryByTestId("extensions-page");
+
+    expect(actual).toBeNull();
+  });
+
+  describe("when navigating to extensions using application menu", () => {
+    beforeEach(async () => {
+      await builder.applicationMenu.click("root", "mac", "navigate-to-extensions");
+    });
+
+    it("focuses the window", () => {
+      expect(focusWindowMock).toHaveBeenCalled();
+    });
+
+    it("renders", () => {
+      expect(rendered.container).toMatchSnapshot();
+    });
+
+    it("shows extensions page", () => {
+      const actual = rendered.getByTestId("extensions-page");
+
+      expect(actual).not.toBeNull();
+    });
+  });
+});

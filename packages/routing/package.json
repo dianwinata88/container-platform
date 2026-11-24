@@ -1,0 +1,47 @@
+{
+  "name": "@freelensapp/routing",
+  "version": "2.1.1-0",
+  "private": true,
+  "description": "Highly extendable routing in the Freelens.",
+  "homepage": "https://freelens.app",
+  "bugs": {
+    "url": "https://github.com/freelensapp/freelens/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/freelensapp/freelens.git"
+  },
+  "license": "MIT",
+  "type": "module",
+  "author": {
+    "name": "Freelens Authors",
+    "email": "freelens@freelens.app"
+  },
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "scripts": {},
+  "dependencies": {
+    "@freelensapp/feature-core": "workspace:^",
+    "@ogre-tools/fp": "catalog:",
+    "@ogre-tools/injectable": "catalog:",
+    "@ogre-tools/injectable-react": "catalog:",
+    "mobx": "catalog:",
+    "mobx-react": "catalog:",
+    "react": "catalog:"
+  },
+  "devDependencies": {
+    "@freelensapp/typescript": "workspace:^",
+    "@ogre-tools/injectable-extension-for-mobx": "catalog:",
+    "@testing-library/jest-dom": "catalog:",
+    "@testing-library/react": "catalog:",
+    "@testing-library/user-event": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "react-dom": "catalog:",
+    "vitest": "catalog:"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

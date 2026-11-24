@@ -1,0 +1,67 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+// The helper types that the signatures of the API are written in, from the
+// copy of type-fest in @freelensapp/type-fest, so that an extension can name
+// them: `Common.Types.PartialDeep<Pod>` for a patch, for one.
+export type {
+  JsonValue,
+  PartialDeep,
+  ReadonlyDeep,
+  RequireAtLeastOne,
+  RequireExactlyOne,
+  SetRequired,
+  ValueOf,
+} from "@freelensapp/type-fest";
+
+export type {
+  ProtocolHandlerRegistration,
+  RouteHandler as ProtocolRouteHandler,
+  RouteParams as ProtocolRouteParams,
+} from "../../common/protocol-handler/registration";
+export type {
+  AppPreferenceComponents,
+  AppPreferenceRegistration,
+} from "../../features/preferences/renderer/extension-preferences/app-preference-registration";
+export type {
+  ShellEnvContext,
+  ShellEnvModifier,
+} from "../../main/shell-session/shell-env-modifier/shell-env-modifier-registration";
+export type {
+  CustomCategoryViewComponents,
+  CustomCategoryViewProps,
+  CustomCategoryViewRegistration,
+} from "../../renderer/components/catalog/custom-views";
+export type { CustomResourceRegistration } from "../../renderer/components/custom-resource-definitions/custom-resource-registration";
+export type {
+  KubeObjectDetailComponents,
+  KubeObjectDetailRegistration,
+} from "../../renderer/components/kube-object-details/kube-object-detail-registration";
+export type {
+  KubeObjectMenuComponents,
+  KubeObjectMenuItemProps,
+  KubeObjectMenuRegistration,
+} from "../../renderer/components/kube-object-menu/kube-object-menu-registration";
+export type {
+  ClusterPageMenuComponents,
+  ClusterPageMenuRegistration,
+} from "../../renderer/components/layout/cluster-page-menu";
+export type { StatusBarRegistration } from "../../renderer/components/status-bar/status-bar-registration";
+export type {
+  KubeObjectContextMenuItem,
+  KubeObjectHandlerRegistration,
+  KubeObjectHandlers,
+  KubeObjectOnContextMenuOpen,
+  KubeObjectOnContextMenuOpenContext,
+} from "../../renderer/kube-object/handler";
+export type {
+  PageComponentProps,
+  PageComponents,
+  PageParams,
+  PageRegistration,
+  PageTarget,
+  RegisteredPage,
+} from "../../renderer/routes/page-registration";

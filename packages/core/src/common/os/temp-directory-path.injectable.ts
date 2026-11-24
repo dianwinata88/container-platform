@@ -1,0 +1,16 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import { tmpdir } from "node:os";
+import { getInjectable } from "@ogre-tools/injectable";
+
+const tempDirectoryPathInjectable = getInjectable({
+  id: "temp-directory-path",
+  instantiate: () => tmpdir(),
+  causesSideEffects: true,
+});
+
+export default tempDirectoryPathInjectable;

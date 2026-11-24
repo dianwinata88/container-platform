@@ -1,0 +1,286 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import { getInjectable } from "@ogre-tools/injectable";
+import { merge } from "es-toolkit/compat";
+import { observable } from "mobx";
+import kubeDirectoryPathInjectable from "../../../common/os/kube-directory-path.injectable";
+import { defaultThemePreference, defaultThemeVariantPreference } from "../../../common/vars";
+import currentTimezoneInjectable from "../../../common/vars/current-timezone.injectable";
+import isDevelopmentInjectable from "../../../common/vars/is-development.injectable";
+import { defaultZoom, isZoomStep } from "../../zoom/common/zoom-steps";
+import {
+  ClusterPageMenuOrder,
+  clampMaxCombinedLogsPods,
+  defaultEditorConfig,
+  defaultExtensionRegistryUrlLocation,
+  defaultLogViewerPreferences,
+  defaultOverviewStylePreference,
+  defaultPackageMirror,
+  defaultTerminalConfig,
+  getPreferenceDescriptor,
+  packageMirrors,
+} from "./preferences-helpers";
+
+import type { ObservableMap } from "mobx";
+
+import type {
+  EditorConfiguration,
+  ExtensionRegistry,
+  KubeconfigSyncEntry,
+  KubeconfigSyncValue,
+  LogViewerPreferences,
+  OverviewStylePreference,
+  PreferenceDescription,
+  StoredExtensionRegistry,
+  TerminalConfig,
+  TerminalThemeVariantPreference,
+  ThemeVariantPreference,
+} from "./preferences-helpers";
+
+// Written out rather than derived from the injectable: the user preferences
+// state reaches the extension API through `ItemListLayout`, and a type derived
+// through `instantiate` would make the published declaration import the DI
+// library. `instantiate` is annotated with it, so the two cannot drift apart.
+export type PreferenceDescriptors = {
+  readonly httpsProxy: PreferenceDescription<string | undefined>;
+  readonly shell: PreferenceDescription<string | undefined>;
+  readonly theme: PreferenceDescription<string>;
+  readonly themeVariant: PreferenceDescription<ThemeVariantPreference>;
+  readonly accentColorDark: PreferenceDescription<string | undefined>;
+  readonly accentColorLight: PreferenceDescription<string | undefined>;
+  readonly overviewStyle: PreferenceDescription<OverviewStylePreference>;
+  readonly zoom: PreferenceDescription<number>;
+  readonly terminalTheme: PreferenceDescription<string>;
+  readonly terminalThemeVariant: PreferenceDescription<TerminalThemeVariantPreference>;
+  readonly localeTimezone: PreferenceDescription<string>;
+  readonly allowUntrustedCAs: PreferenceDescription<boolean>;
+  readonly allowErrorReporting: PreferenceDescription<boolean>;
+  readonly downloadMirror: PreferenceDescription<string>;
+  readonly downloadCustomMirror: PreferenceDescription<string>;
+  readonly downloadKubectlBinaries: PreferenceDescription<boolean>;
+  readonly downloadBinariesPath: PreferenceDescription<string | undefined>;
+  readonly kubectlBinariesPath: PreferenceDescription<string | undefined>;
+  readonly helmBinariesPath: PreferenceDescription<string | undefined>;
+  readonly helmServerSide: PreferenceDescription<boolean>;
+  readonly openAtLogin: PreferenceDescription<boolean>;
+  readonly showTrayIcon: PreferenceDescription<boolean>;
+  readonly hotbarAutoHide: PreferenceDescription<boolean>;
+  readonly persistentSearch: PreferenceDescription<boolean>;
+  readonly logViewerPreferences: PreferenceDescription<Partial<LogViewerPreferences>, LogViewerPreferences>;
+  readonly terminalCopyOnSelect: PreferenceDescription<boolean>;
+  readonly hiddenTableColumns: PreferenceDescription<[string, string[]][], Map<string, Set<string>>>;
+  readonly syncKubeconfigEntries: PreferenceDescription<
+    KubeconfigSyncEntry[],
+    ObservableMap<string, KubeconfigSyncValue>
+  >;
+  readonly editorConfiguration: PreferenceDescription<Partial<EditorConfiguration>, EditorConfiguration>;
+  readonly terminalConfig: PreferenceDescription<Partial<TerminalConfig>, TerminalConfig>;
+  readonly extensionRegistryUrl: PreferenceDescription<StoredExtensionRegistry, ExtensionRegistry>;
+  readonly clusterPageMenuOrder: PreferenceDescription<ClusterPageMenuOrder | undefined>;
+};
+
+const userPreferenceDescriptorsInjectable = getInjectable({
+  id: "user-preference-descriptors",
+  instantiate: (di): PreferenceDescriptors => {
+    const currentTimezone = di.inject(currentTimezoneInjectable);
+    const mainKubeFolderPath = di.inject(kubeDirectoryPathInjectable);
+    const isDevelopment = di.inject(isDevelopmentInjectable);
+
+    return {
+      httpsProxy: getPreferenceDescriptor<string | undefined>({
+        fromStore: (val) => val,
+        toStore: (val) => val || undefined,
+      }),
+      shell: getPreferenceDescriptor<string | undefined>({
+        fromStore: (val) => val,
+        toStore: (val) => val || undefined,
+      }),
+      theme: getPreferenceDescriptor<string>({
+        fromStore: (val) => val || defaultThemePreference,
+        toStore: (val) => (!val || val === defaultThemePreference ? undefined : val),
+      }),
+      themeVariant: getPreferenceDescriptor<ThemeVariantPreference>({
+        fromStore: (val) => (val === "dark" || val === "light" ? val : defaultThemeVariantPreference),
+        toStore: (val) => (val === "dark" || val === "light" ? val : undefined),
+      }),
+      accentColorDark: getPreferenceDescriptor<string | undefined>({
+        fromStore: (val) => val,
+        toStore: (val) => val || undefined,
+      }),
+      accentColorLight: getPreferenceDescriptor<string | undefined>({
+        fromStore: (val) => val,
+        toStore: (val) => val || undefined,
+      }),
+      overviewStyle: getPreferenceDescriptor<OverviewStylePreference>({
+        fromStore: (val) => (val === "cards" ? val : defaultOverviewStylePreference),
+        toStore: (val) => (val === "cards" ? val : undefined),
+      }),
+      zoom: getPreferenceDescriptor<number>({
+        fromStore: (val) => (isZoomStep(val) ? val : defaultZoom),
+        toStore: (val) => (isZoomStep(val) && val !== defaultZoom ? val : undefined),
+      }),
+      terminalTheme: getPreferenceDescriptor<string>({
+        fromStore: (val) => val || "",
+        toStore: (val) => val || undefined,
+      }),
+      terminalThemeVariant: getPreferenceDescriptor<TerminalThemeVariantPreference>({
+        fromStore: (val) => (val === "light" ? "light" : "dark"),
+        toStore: (val) => (val === "light" ? val : undefined),
+      }),
+      localeTimezone: getPreferenceDescriptor<string>({
+        fromStore: (val) => val || currentTimezone,
+        toStore: (val) => (!val || val === currentTimezone ? undefined : val),
+      }),
+      allowUntrustedCAs: getPreferenceDescriptor<boolean>({
+        fromStore: (val) => val ?? false,
+        toStore: (val) => (!val ? undefined : val),
+      }),
+      allowErrorReporting: getPreferenceDescriptor<boolean>({
+        fromStore: (val) => val ?? true,
+        toStore: (val) => (val ? undefined : val),
+      }),
+      downloadMirror: getPreferenceDescriptor<string>({
+        fromStore: (val) => (!val || !packageMirrors.has(val) ? defaultPackageMirror : val),
+        toStore: (val) => (val === defaultPackageMirror ? undefined : val),
+      }),
+      downloadCustomMirror: getPreferenceDescriptor<string>({
+        fromStore: (val) => val || "",
+        toStore: (val) => val || undefined,
+      }),
+      downloadKubectlBinaries: getPreferenceDescriptor<boolean>({
+        fromStore: (val) => val ?? true,
+        toStore: (val) => (val ? undefined : val),
+      }),
+      downloadBinariesPath: getPreferenceDescriptor<string | undefined>({
+        fromStore: (val) => val,
+        toStore: (val) => val || undefined,
+      }),
+      kubectlBinariesPath: getPreferenceDescriptor<string | undefined>({
+        fromStore: (val) => val,
+        toStore: (val) => val || undefined,
+      }),
+      helmBinariesPath: getPreferenceDescriptor<string | undefined>({
+        fromStore: (val) => val,
+        toStore: (val) => val || undefined,
+      }),
+      helmServerSide: getPreferenceDescriptor<boolean>({
+        fromStore: (val) => val ?? true,
+        toStore: (val) => (val ? undefined : val),
+      }),
+      openAtLogin: getPreferenceDescriptor<boolean>({
+        fromStore: (val) => val ?? false,
+        toStore: (val) => (!val ? undefined : val),
+      }),
+      showTrayIcon: getPreferenceDescriptor<boolean>({
+        fromStore: (val) => val ?? true,
+        toStore: (val) => (val ? undefined : val),
+      }),
+      hotbarAutoHide: getPreferenceDescriptor<boolean>({
+        fromStore: (val) => val ?? false,
+        toStore: (val) => (!val ? undefined : val),
+      }),
+      persistentSearch: getPreferenceDescriptor<boolean>({
+        fromStore: (val) => val ?? false,
+        toStore: (val) => (!val ? undefined : val),
+      }),
+      logViewerPreferences: getPreferenceDescriptor<Partial<LogViewerPreferences>, LogViewerPreferences>({
+        fromStore: (val) => ({
+          ...defaultLogViewerPreferences,
+          ...val,
+          maxCombinedLogsPods: clampMaxCombinedLogsPods(val?.maxCombinedLogsPods),
+        }),
+        toStore: (val) => {
+          const clampedValue: LogViewerPreferences = {
+            ...val,
+            maxCombinedLogsPods: clampMaxCombinedLogsPods(val.maxCombinedLogsPods),
+          };
+          const storedValue: Partial<LogViewerPreferences> = {};
+
+          for (const key of Object.keys(defaultLogViewerPreferences) as (keyof LogViewerPreferences)[]) {
+            if (clampedValue[key] !== defaultLogViewerPreferences[key]) {
+              (storedValue as Record<string, unknown>)[key] = clampedValue[key];
+            }
+          }
+
+          return Object.keys(storedValue).length > 0 ? storedValue : undefined;
+        },
+      }),
+      terminalCopyOnSelect: getPreferenceDescriptor<boolean>({
+        fromStore: (val) => val ?? false,
+        toStore: (val) => (!val ? undefined : val),
+      }),
+      hiddenTableColumns: getPreferenceDescriptor<[string, string[]][], Map<string, Set<string>>>({
+        fromStore: (val = []) => new Map(val.map(([tableId, columnIds]) => [tableId, new Set(columnIds)])),
+        toStore: (val) => {
+          const res: [string, string[]][] = [];
+
+          for (const [table, columns] of val) {
+            if (columns.size) {
+              res.push([table, Array.from(columns)]);
+            }
+          }
+
+          return res.length ? res : undefined;
+        },
+      }),
+      syncKubeconfigEntries: (() => {
+        const map = observable.map<string, KubeconfigSyncValue>();
+        // A development profile does not sync the developer's own ~/.kube
+        // unless it is added explicitly, so a dev or test session stays
+        // isolated from their real clusters.
+        const defaultFilePaths = isDevelopment ? [] : [mainKubeFolderPath];
+
+        return getPreferenceDescriptor<KubeconfigSyncEntry[], ObservableMap<string, KubeconfigSyncValue>>({
+          fromStore: (val) => {
+            const entries =
+              val?.map(({ filePath, ...rest }) => [filePath, rest] as const) ??
+              defaultFilePaths.map((filePath) => [filePath, {} as KubeconfigSyncValue] as const);
+            const desired = new Map(entries);
+
+            for (const key of Array.from(map.keys())) {
+              if (!desired.has(key)) {
+                map.delete(key);
+              }
+            }
+            for (const [key, value] of desired) {
+              map.set(key, value);
+            }
+
+            return map;
+          },
+          toStore: (val) =>
+            val.size === defaultFilePaths.length && defaultFilePaths.every((filePath) => val.has(filePath))
+              ? undefined
+              : Array.from(val, ([filePath, rest]) => ({ filePath, ...rest })),
+        });
+      })(),
+      editorConfiguration: getPreferenceDescriptor<Partial<EditorConfiguration>, EditorConfiguration>({
+        fromStore: (val) => merge(defaultEditorConfig, val),
+        toStore: (val) => val,
+      }),
+      terminalConfig: getPreferenceDescriptor<Partial<TerminalConfig>, TerminalConfig>({
+        fromStore: (val) => merge(defaultTerminalConfig, val),
+        toStore: (val) => val,
+      }),
+      extensionRegistryUrl: getPreferenceDescriptor<StoredExtensionRegistry, ExtensionRegistry>({
+        fromStore: (val) =>
+          !val || val.location === "npmrc"
+            ? {
+                location: defaultExtensionRegistryUrlLocation,
+              }
+            : val,
+        toStore: (val) => (val.location === defaultExtensionRegistryUrlLocation ? undefined : val),
+      }),
+      clusterPageMenuOrder: getPreferenceDescriptor<ClusterPageMenuOrder | undefined>({
+        fromStore: (val) => val,
+        toStore: (val) => val,
+      }),
+    } as const;
+  },
+});
+
+export default userPreferenceDescriptorsInjectable;

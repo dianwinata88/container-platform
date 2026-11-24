@@ -1,0 +1,65 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import { beforeEach, describe, expect, it } from "vitest";
+import { getApplicationBuilder } from "../../renderer/components/test-utils/get-application-builder";
+
+import type { RenderResult } from "@testing-library/react";
+
+import type { ApplicationBuilder } from "../../renderer/components/test-utils/get-application-builder";
+
+describe("welcome - navigation using application menu", () => {
+  let applicationBuilder: ApplicationBuilder;
+  let rendered: RenderResult;
+
+  beforeEach(async () => {
+    applicationBuilder = getApplicationBuilder();
+
+    rendered = await applicationBuilder.render();
+  });
+
+  it("renders", () => {
+    expect(rendered.container).toMatchSnapshot();
+  });
+
+  it("shows welcome page being front page", () => {
+    const actual = rendered.getByTestId("welcome-page");
+
+    expect(actual).not.toBeNull();
+  });
+
+  describe("when navigated somewhere else", () => {
+    beforeEach(async () => {
+      await applicationBuilder.applicationMenu.click("root", "mac", "navigate-to-preferences");
+    });
+
+    it("renders", () => {
+      expect(rendered.baseElement).toMatchSnapshot();
+    });
+
+    it("does not show welcome page", () => {
+      const actual = rendered.queryByTestId("welcome-page");
+
+      expect(actual).toBeNull();
+    });
+
+    describe("when navigated to welcome using application menu", () => {
+      beforeEach(async () => {
+        await applicationBuilder.applicationMenu.click("root", "help", "navigate-to-welcome");
+      });
+
+      it("renders", () => {
+        expect(rendered.container).toMatchSnapshot();
+      });
+
+      it("shows welcome page", () => {
+        const actual = rendered.getByTestId("welcome-page");
+
+        expect(actual).not.toBeNull();
+      });
+    });
+  });
+});

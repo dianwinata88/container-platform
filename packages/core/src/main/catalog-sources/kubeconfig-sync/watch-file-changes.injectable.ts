@@ -1,0 +1,197 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import path from "node:path";
+import { inspect } from "node:util";
+import { getOrInsertWith, isErrnoException, iter } from "@freelensapp/utilities";
+import { getInjectable } from "@ogre-tools/injectable";
+import { computed, observable } from "mobx";
+import statInjectable from "../../../common/fs/stat.injectable";
+import watchInjectable from "../../../common/fs/watch/watch.injectable";
+import diffChangedKubeconfigInjectable from "./diff-changed-kubeconfig.injectable";
+import kubeconfigSyncLoggerInjectable from "./logger.injectable";
+
+import type { Disposer } from "@freelensapp/utilities";
+
+import type { IComputedValue, ObservableMap } from "mobx";
+
+import type { CatalogEntity } from "../../../common/catalog";
+import type { Cluster } from "../../../common/cluster/cluster";
+import type { Watcher } from "../../../common/fs/watch/watch.injectable";
+
+export type WatchKubeconfigFileChanges = (filepath: string) => [IComputedValue<CatalogEntity[]>, Disposer];
+
+/**
+ * These file names are ignored outright when under a folder sync
+ */
+const ignoredFileNames = new Set([
+  ".DS_Store", // macOS specific
+  "Thumbs.db", // windows specific
+  "cache", // discovery cache
+  "desktop.ini", // windows specific
+  "kubectx", // kubectx cache
+  "kubens", // kubens cache
+]);
+
+/**
+ * These file name patterns are ignored when under a folder sync.
+ *
+ * They used to be globs compiled by `glob-to-regexp`. What is matched is always
+ * a basename, so every `*` in the original globs compiled to `.*` and did
+ * nothing but leave one end of the pattern unanchored.
+ */
+const ignoredFileNamePatterns = [
+  /^\._/, // macOS specific
+  /^\.#/, // emacs lock files
+  /^~/, // backup file
+  /\.bak$/, // backup file
+  /\.lock$/, // kubectl lock files
+  /\.sw[nop]$/, // vim swap files
+  /#$/, // emacs auto save
+  /~$/, // backup file
+];
+
+/**
+ * Returns the ignore rule that `fileName` matches, or `undefined` when the file
+ * should be synced.
+ */
+export const matchIgnoredKubeconfigFileName = (fileName: string): string | undefined => {
+  if (ignoredFileNames.has(fileName)) {
+    return fileName;
+  }
+
+  return ignoredFileNamePatterns.find((pattern) => pattern.test(fileName))?.source;
+};
+
+/**
+ * This should be much larger than any kubeconfig text file
+ *
+ * Even if you have a cert-file, key-file, and client-cert files that is only
+ * 12kb of extra data (at 4096 bytes each) which allows for around 150 entries.
+ */
+const folderSyncMaxAllowedFileReadSize = 2 * 1024 * 1024; // 2 MiB
+const fileSyncMaxAllowedFileReadSize = 16 * folderSyncMaxAllowedFileReadSize; // 32 MiB
+
+/**
+ * Detects kubeconfig paths that live on a WSL 9p filesystem share, e.g.
+ * `\\wsl.localhost\Ubuntu\...` (Windows 11) or `\\wsl$\Ubuntu\...` (Windows 10).
+ *
+ * Native filesystem change notifications (`FindFirstChangeNotification`) do not
+ * work over the 9p protocol, so the watcher never fires and new clusters only
+ * appear after a restart. Enabling polling is the recommended workaround.
+ *
+ * @see https://github.com/freelensapp/freelens/issues/2020
+ */
+export const isWslPath = (filePath: string): boolean => /^\\\\wsl(\.localhost|\$)\\/i.test(filePath);
+
+const watchKubeconfigFileChangesInjectable = getInjectable({
+  id: "watch-kubeconfig-file-changes",
+  instantiate: (di): WatchKubeconfigFileChanges => {
+    const diffChangedKubeconfig = di.inject(diffChangedKubeconfigInjectable);
+    const logger = di.inject(kubeconfigSyncLoggerInjectable);
+    const stat = di.inject(statInjectable);
+    const watch = di.inject(watchInjectable);
+
+    return (filePath) => {
+      const rootSource = observable.map<string, ObservableMap<string, [Cluster, CatalogEntity]>>();
+      const derivedSource = computed(() =>
+        Array.from(iter.flatMap(rootSource.values(), (from) => iter.map(from.values(), (child) => child[1]))),
+      );
+
+      let watcher: Watcher<true>;
+
+      (async () => {
+        try {
+          const stats = await stat(filePath);
+          const isFolderSync = stats.isDirectory();
+          const cleanupFns = new Map<string, Disposer>();
+          const maxAllowedFileReadSize = isFolderSync
+            ? folderSyncMaxAllowedFileReadSize
+            : fileSyncMaxAllowedFileReadSize;
+
+          watcher = watch<true>(filePath, {
+            followSymlinks: true,
+            depth: isFolderSync ? 0 : 1, // DIRs works with 0 but files need 1 (bug: https://github.com/paulmillr/chokidar/issues/1095)
+            ignorePermissionErrors: true,
+            // WSL 9p shares do not emit native filesystem change events, so fall
+            // back to polling for kubeconfigs stored under `\\wsl.localhost\` or
+            // `\\wsl$\` (https://github.com/freelensapp/freelens/issues/2020).
+            usePolling: isWslPath(filePath),
+            awaitWriteFinish: {
+              pollInterval: 100,
+              stabilityThreshold: 1000,
+            },
+            atomic: 150, // for "atomic writes"
+            alwaysStat: true,
+          });
+
+          watcher
+            .on("change", (childFilePath, stats): void => {
+              const cleanup = cleanupFns.get(childFilePath);
+
+              if (!cleanup) {
+                // file was previously ignored, do nothing
+                return void logger.debug(
+                  `${inspect(childFilePath)} that should have been previously ignored has changed. Doing nothing`,
+                );
+              }
+
+              cleanup();
+              cleanupFns.set(
+                childFilePath,
+                diffChangedKubeconfig({
+                  filePath: childFilePath,
+                  source: getOrInsertWith(rootSource, childFilePath, observable.map),
+                  stats,
+                  maxAllowedFileReadSize,
+                }),
+              );
+            })
+            .on("add", (childFilePath, stats): void => {
+              if (isFolderSync) {
+                const ignoreRule = matchIgnoredKubeconfigFileName(path.basename(childFilePath));
+
+                if (ignoreRule) {
+                  return void logger.info(`ignoring ${inspect(childFilePath)} due to ignore rule: ${ignoreRule}`);
+                }
+              }
+
+              cleanupFns.set(
+                childFilePath,
+                diffChangedKubeconfig({
+                  filePath: childFilePath,
+                  source: getOrInsertWith(rootSource, childFilePath, observable.map),
+                  stats,
+                  maxAllowedFileReadSize,
+                }),
+              );
+            })
+            .on("unlink", (childFilePath) => {
+              cleanupFns.get(childFilePath)?.();
+              cleanupFns.delete(childFilePath);
+              rootSource.delete(childFilePath);
+            })
+            .on("error", (error) => logger.error(`watching file/folder failed: ${error}`, { filePath }));
+        } catch (error) {
+          if (isErrnoException(error) && error.code === "ENOENT") {
+            return void logger.debug(`skipping missing file/folder`, { filePath });
+          }
+
+          logger.warn(`failed to start watching changes: ${error}`);
+        }
+      })();
+
+      return [
+        derivedSource,
+        () => {
+          watcher?.close();
+        },
+      ];
+    };
+  },
+});
+
+export default watchKubeconfigFileChangesInjectable;

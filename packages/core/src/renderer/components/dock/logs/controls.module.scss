@@ -1,0 +1,17 @@
+@use "../../mixins";
+
+.controls {
+  @include mixins.hidden-scrollbar;
+
+  display: flex;
+  /* The mixin above makes this a scroll container, which drops its automatic
+     minimum size to zero and lets the flex column squeeze the bar to a sliver.
+     Keep it at its natural height and let the log list take the rest. */
+  flex-shrink: 0;
+  gap: var(--padding);
+  align-items: center;
+  justify-content: space-between;
+  flex-flow: row wrap;
+  background: var(--dockInfoBackground);
+  padding: var(--padding) calc(var(--padding) * 2);
+}

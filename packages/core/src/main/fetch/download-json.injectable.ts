@@ -1,0 +1,84 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import { getInjectable, type Injectable } from "@ogre-tools/injectable";
+import { withTimeout } from "../../common/fetch/timeout-controller";
+import proxyFetchInjectable from "./proxy-fetch.injectable";
+
+import type { FetchRequestInit, FetchResponse } from "@freelensapp/json-api";
+import type { AsyncResult } from "@freelensapp/utilities";
+
+export interface DownloadJsonOptions {
+  timeout?: number;
+}
+
+export type DownloadJson = (url: string, opts?: DownloadJsonOptions) => AsyncResult<unknown, string>;
+
+function errorString(error: unknown): string {
+  // `withTimeout` aborts with a string reason, which fetch rejects with as is.
+  if (typeof error === "string") {
+    return error;
+  }
+  if (typeof error === "object" && error !== null) {
+    const obj = error as any;
+    if (obj?.status || obj?.statusText) {
+      return [obj?.status, obj?.statusText].filter((a) => !!a).join(": ");
+    }
+    if (obj?.message) {
+      // undici's fetch rejects with a bare "fetch failed" and the reason, a
+      // refused connection, a proxy or TLS failure, in `cause`.
+      return obj?.cause?.message ? `${obj.message}: ${obj.cause.message}` : obj.message;
+    }
+    return String(obj);
+  }
+  return "Uknown error";
+}
+
+const downloadJsonInjectable: Injectable<DownloadJson, unknown, void> = getInjectable({
+  id: "download-json",
+  instantiate: (di) => {
+    const proxyFetch = di.inject(proxyFetchInjectable);
+
+    return async (url, opts) => {
+      let result: FetchResponse;
+      const fetchOpts = {} as FetchRequestInit;
+
+      if (opts?.timeout) {
+        const controller = withTimeout(opts.timeout);
+        fetchOpts.signal = controller.signal;
+      }
+
+      try {
+        result = await proxyFetch(url, fetchOpts);
+      } catch (error) {
+        return {
+          callWasSuccessful: false,
+          error: errorString(error),
+        };
+      }
+
+      if (result.status < 200 || 300 <= result.status) {
+        return {
+          callWasSuccessful: false,
+          error: errorString(result),
+        };
+      }
+
+      try {
+        return {
+          callWasSuccessful: true,
+          response: await result.json(),
+        };
+      } catch (error) {
+        return {
+          callWasSuccessful: false,
+          error: errorString(error),
+        };
+      }
+    };
+  },
+});
+
+export default downloadJsonInjectable;

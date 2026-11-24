@@ -1,0 +1,65 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+@use "../vars" as *;
+
+.ItemListLayout {
+  background: var(--contentColor);
+  height: 100%;
+
+  > .header {
+    padding: #{$padding * 2};
+
+    .title {
+      color: var(--textColorTertiary);
+    }
+
+    .info-panel {
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    .NamespaceSelect {
+      .Select {
+        &__value-container {
+          margin-bottom: 0;
+        }
+      }
+    }
+  }
+
+  > .items {
+    position: relative;
+    min-height: 130px;
+
+    /* The virtualized list fills its parent with height: 100%, so every flex
+       item between here and it must be able to shrink below its content.
+       Without this the automatic min-height of a flex item sizes the list to
+       all of its rows at once, the percentage height resolves against that,
+       and the list never scrolls. */
+    .Table,
+    .VirtualList {
+      min-height: 0;
+    }
+
+    .resize-guide {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 3px;
+      background-color: var(--blue);
+      z-index: 1000;
+      pointer-events: none;
+    }
+  }
+}
+
+.ItemListLayoutVisibilityMenu {
+  .Checkbox {
+    --checkbox-color: inherit;
+    color: var(--checkbox-color);
+  }
+}

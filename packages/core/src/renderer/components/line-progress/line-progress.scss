@@ -1,0 +1,44 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+@use "../vars" as *;
+
+.LineProgress {
+  position: relative;
+  border-radius: 2px;
+  background: var(--lineProgressBackground);
+  height: 3px;
+
+  // extended hover area, e.g. for tooltips
+  &:after {
+    $offset: $padding;
+    content: "";
+    position: absolute;
+    top: -$offset;
+    left: 0;
+    bottom: -$offset;
+    right: 0;
+  }
+
+  // line indicator
+  .line {
+    position: relative;
+    background: currentColor;
+    display: block;
+    width: 100%;
+    height: 100%;
+    border-radius: inherit;
+    transition: 250ms width ease-in;
+
+    // optional second line behind the main one, e.g. requests behind usage
+    &.secondary {
+      position: absolute;
+      top: 0;
+      left: 0;
+      opacity: 0.5;
+    }
+  }
+}

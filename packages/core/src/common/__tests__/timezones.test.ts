@@ -1,0 +1,15 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import { describe, expect, it } from "vitest";
+
+describe("Timezones", () => {
+  it("should always be UTC", () => {
+    expect(new Date().getTimezoneOffset()).toBe(0);
+  });
+});
+
+export {};

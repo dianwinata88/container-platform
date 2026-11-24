@@ -1,0 +1,63 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import assert from "node:assert";
+import { prefixedLoggerInjectable } from "@freelensapp/logger";
+import { iter } from "@freelensapp/utilities";
+import { getInjectable } from "@ogre-tools/injectable";
+import { asyncComputed } from "../../../common/utils/async-computed";
+import requestListHelmReleasesInjectable from "../../../features/helm-releases/renderer/request-list-helm-releases.injectable";
+import clusterFrameContextForNamespacedResourcesInjectable from "../../cluster-frame-context/for-namespaced-resources.injectable";
+import hostedClusterIdInjectable from "../../cluster-frame-context/hosted-cluster-id.injectable";
+import releaseObjectsInjectable from "./release-objects/release-objects.injectable";
+import { toHelmRelease } from "./to-helm-release";
+
+const releasesInjectable = getInjectable({
+  id: "releases",
+
+  instantiate: (di) => {
+    const clusterContext = di.inject(clusterFrameContextForNamespacedResourcesInjectable);
+    const hostedClusterId = di.inject(hostedClusterIdInjectable);
+    const releaseObjects = di.inject(releaseObjectsInjectable);
+    const requestListHelmReleases = di.inject(requestListHelmReleasesInjectable);
+    const logger = di.inject(prefixedLoggerInjectable, "HELM-RELEASES");
+
+    assert(hostedClusterId, "hostedClusterId is required");
+
+    return asyncComputed({
+      getValueFromObservedPromise: async () => {
+        void releaseObjects.get();
+
+        const releaseResults = await (clusterContext.hasSelectedAll
+          ? requestListHelmReleases({ clusterId: hostedClusterId })
+          : Promise.all(
+              clusterContext.contextNamespaces.map((namespace) =>
+                requestListHelmReleases({ clusterId: hostedClusterId, namespace }),
+              ),
+            ));
+
+        return iter
+          .chain([releaseResults].flat().values())
+          .filterMap((result) => {
+            if (result.callWasSuccessful) {
+              return result.response;
+            }
+
+            logger.warn("Failed to list helm releases", { error: result.error });
+
+            return undefined;
+          })
+          .flatMap((releases) => releases)
+          .map(toHelmRelease)
+          .toArray();
+      },
+      valueWhenPending: [],
+      betweenUpdates: "show-latest-value",
+    });
+  },
+});
+
+export default releasesInjectable;

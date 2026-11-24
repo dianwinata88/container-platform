@@ -1,0 +1,55 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import { hasDefinedTupleValue, isDefined, object } from "@freelensapp/utilities";
+import { getInjectable } from "@ogre-tools/injectable";
+import { groupBy, reduce } from "es-toolkit/compat";
+import { clusterMetadataDetectorInjectionToken } from "./token";
+
+import type { Cluster } from "../../common/cluster/cluster";
+import type { ClusterMetadata } from "../../common/cluster-types";
+import type { ClusterDetectionResult, ClusterMetadataDetector } from "./token";
+
+export type DetectClusterMetadata = (cluster: Cluster) => Promise<ClusterMetadata>;
+
+const pickHighestAccuracy = (prev: ClusterDetectionResult, curr: ClusterDetectionResult) =>
+  prev.accuracy > curr.accuracy ? prev : curr;
+
+const detectMetadataWithFor = (cluster: Cluster) => async (clusterMetadataDetector: ClusterMetadataDetector) => {
+  try {
+    return {
+      key: clusterMetadataDetector.key,
+      result: await clusterMetadataDetector.detect(cluster),
+    };
+  } catch {
+    return null;
+  }
+};
+
+const detectClusterMetadataInjectable = getInjectable({
+  id: "detect-cluster-metadata",
+  instantiate: (di): DetectClusterMetadata => {
+    const clusterMetadataDetectors = di.injectMany(clusterMetadataDetectorInjectionToken);
+
+    return async (cluster) => {
+      const detected = await Promise.all(clusterMetadataDetectors.map(detectMetadataWithFor(cluster)));
+
+      const entries = object
+        .entries(groupBy(detected.filter(isDefined), "key"))
+        .map(([key, detectionResults]) => {
+          const results = detectionResults.map(({ result }) => result as ClusterDetectionResult);
+          const highestAccuracyResult = reduce(results, pickHighestAccuracy)?.value;
+
+          return [key, highestAccuracyResult] as const;
+        })
+        .filter(hasDefinedTupleValue);
+
+      return object.fromEntries(entries);
+    };
+  },
+});
+
+export default detectClusterMetadataInjectable;

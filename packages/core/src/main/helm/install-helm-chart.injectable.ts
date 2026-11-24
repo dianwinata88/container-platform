@@ -1,0 +1,109 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import { getInjectable } from "@ogre-tools/injectable";
+import { temporaryFile } from "tempy";
+import removePathInjectable from "../../common/fs/remove.injectable";
+import writeFileInjectable from "../../common/fs/write-file.injectable";
+import userPreferencesStateInjectable from "../../features/user-preferences/common/state.injectable";
+import execHelmInjectable, { proxyKubeconfigHelmOptions } from "./exec-helm/exec-helm.injectable";
+
+import type { ProxyKubeconfigPaths } from "../kubeconfig-manager/kubeconfig-manager";
+
+export interface InstallHelmChartData {
+  chart: string;
+  values: string;
+  name?: string;
+  namespace: string;
+  version: string;
+  kubeconfig: ProxyKubeconfigPaths;
+  forceConflicts?: boolean;
+}
+
+export interface InstallHelmChartResult {
+  log: string;
+  release: {
+    name: string;
+    namespace: string;
+  };
+}
+
+export type InstallHelmChart = (data: InstallHelmChartData) => Promise<InstallHelmChartResult>;
+
+const installHelmChartInjectable = getInjectable({
+  id: "install-helm-chart",
+  instantiate: (di): InstallHelmChart => {
+    const writeFile = di.inject(writeFileInjectable);
+    const removePath = di.inject(removePathInjectable);
+    const execHelm = di.inject(execHelmInjectable);
+    const state = di.inject(userPreferencesStateInjectable);
+
+    return async ({ chart, kubeconfig, name, namespace, values, version, forceConflicts }) => {
+      const valuesFilePath = temporaryFile({ name: "values.yaml" });
+
+      await writeFile(valuesFilePath, values);
+
+      const args = ["install"];
+
+      if (name) {
+        args.push(name);
+      }
+
+      args.push(
+        chart,
+        "--version",
+        version,
+        "--values",
+        valuesFilePath,
+        "--namespace",
+        namespace,
+        "--kubeconfig",
+        kubeconfig.kubeconfigPath,
+      );
+
+      if (!name) {
+        args.push("--generate-name");
+      }
+
+      // If forceConflicts is enabled, always use server-side
+      // Otherwise, use the preference setting
+      const useServerSide = forceConflicts || state.helmServerSide;
+
+      if (forceConflicts) {
+        args.push("--force-conflicts");
+      }
+
+      if (useServerSide) {
+        args.push("--server-side=true");
+      } else {
+        args.push("--server-side=false");
+      }
+
+      try {
+        const result = await execHelm(args, proxyKubeconfigHelmOptions(kubeconfig));
+
+        if (!result.callWasSuccessful) {
+          throw result.error;
+        }
+
+        const output = result.response;
+        const releaseName = output.split("\n")[0].split(" ")[1].trim();
+
+        return {
+          log: output,
+          release: {
+            name: releaseName,
+            namespace,
+          },
+        };
+      } finally {
+        await removePath(valuesFilePath);
+      }
+    };
+  },
+});
+
+export default installHelmChartInjectable;

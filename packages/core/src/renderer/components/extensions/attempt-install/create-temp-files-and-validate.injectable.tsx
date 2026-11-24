@@ -1,0 +1,87 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import { loggerInjectionToken } from "@freelensapp/logger";
+import { showErrorNotificationInjectable } from "@freelensapp/notifications";
+import { getInjectable } from "@ogre-tools/injectable";
+import writeFileInjectable from "../../../../common/fs/write-file.injectable";
+import tempDirectoryPathInjectable from "../../../../common/os/temp-directory-path.injectable";
+import joinPathsInjectable from "../../../../common/path/join-paths.injectable";
+import { getMessageFromError } from "../get-message-from-error/get-message-from-error";
+import { validatePackage } from "./validate-package";
+
+import type { LensExtensionId, LensExtensionManifest } from "../../../../extensions/installed-extension";
+import type { InstallChecksum } from "../../../../features/extensions/installer/common/checksums";
+import type { InstalledExtensionSource } from "../../../../features/extensions/installer/common/installed-extensions";
+import type { InstallRequest } from "./attempt-install.injectable";
+
+export interface InstallRequestValidated {
+  fileName: string;
+  data: Uint8Array;
+  id: LensExtensionId;
+  manifest: LensExtensionManifest;
+  tempFile: string; // temp system path to packed extension for unpacking
+  source?: InstalledExtensionSource;
+  checksum?: InstallChecksum;
+}
+
+export type CreateTempFilesAndValidate = (request: InstallRequest) => Promise<InstallRequestValidated | null>;
+
+const createTempFilesAndValidateInjectable = getInjectable({
+  id: "create-temp-files-and-validate",
+  instantiate: (di): CreateTempFilesAndValidate => {
+    const logger = di.inject(loggerInjectionToken);
+    const writeFile = di.inject(writeFileInjectable);
+    const joinPaths = di.inject(joinPathsInjectable);
+    const showErrorNotification = di.inject(showErrorNotificationInjectable);
+    const tempDirectoryPath = di.inject(tempDirectoryPathInjectable);
+
+    const getTempExtensionPackagePath = (fileName: string) => joinPaths(tempDirectoryPath, "lens-extensions", fileName);
+
+    return async ({ fileName, data, source, checksum }) => {
+      // validate packages
+      const tempFile = getTempExtensionPackagePath(fileName);
+
+      try {
+        await writeFile(tempFile, data);
+        const manifest = await validatePackage(tempFile);
+
+        return {
+          fileName,
+          data,
+          manifest,
+          tempFile,
+          source,
+          checksum,
+          // An extension is identified by its name, independently of which
+          // version of it happens to be installed.
+          id: manifest.name,
+        };
+      } catch (error) {
+        const message = getMessageFromError(error);
+
+        logger.info(`[EXTENSION-INSTALLATION]: installing ${fileName} has failed: ${message}`, { error });
+        showErrorNotification(
+          <div className="flex flex-col gap-2">
+            <p>
+              {"Installing "}
+              <em>{fileName}</em>
+              {" has failed, skipping."}
+            </p>
+            <p>
+              {"Reason: "}
+              <em>{message}</em>
+            </p>
+          </div>,
+        );
+      }
+
+      return null;
+    };
+  },
+});
+
+export default createTempFilesAndValidateInjectable;

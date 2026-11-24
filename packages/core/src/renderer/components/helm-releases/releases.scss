@@ -1,0 +1,26 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+@use "release.mixins";
+@use "../vars" as *;
+
+.HelmReleases {
+  .TableCell {
+    &.status {
+      @include release.release-status-colors;
+    }
+
+    &.version {
+      > .Icon {
+        margin-left: $margin;
+
+        &.new-version {
+          color: var(--colorInfo);
+        }
+      }
+    }
+  }
+}

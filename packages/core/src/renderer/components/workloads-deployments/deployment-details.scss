@@ -1,0 +1,26 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+@use "../workloads/workloads-mixins";
+
+.DeploymentDetails {
+  .conditions {
+    .Available {
+      color: white;
+      background-color: workloads-mixins.$deployment-available;
+    }
+
+    .Progressing {
+      color: white;
+      background-color: workloads-mixins.$deployment-progressing;
+    }
+
+    .ReplicaFailure {
+      color: white;
+      background-color: workloads-mixins.$deployment-replicafailure;
+    }
+  }
+}

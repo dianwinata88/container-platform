@@ -1,0 +1,266 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import "./drawer.scss";
+
+import { Animate } from "@freelensapp/animate";
+import { Icon } from "@freelensapp/icon";
+import { ResizeDirection, ResizeGrowthDirection, ResizeSide, ResizingAnchor } from "@freelensapp/resizing-anchor";
+import { historyInjectionToken } from "@freelensapp/routing";
+import { cssNames, noop } from "@freelensapp/utilities";
+import { withInjectables } from "@ogre-tools/injectable-react";
+import React from "react";
+import { createPortal } from "react-dom";
+import { CopyToClipboardIcon } from "../copy-to-clipboard/copy-to-clipboard-icon";
+import drawerStorageInjectable, { defaultDrawerWidth } from "./drawer-storage/drawer-storage.injectable";
+
+import type { AnimateName } from "@freelensapp/animate";
+import type { History } from "@freelensapp/routing";
+import type { StrictReactNode } from "@freelensapp/utilities";
+
+import type { StorageLayer } from "../../utils/storage-helper";
+
+export type DrawerPosition = "top" | "left" | "right" | "bottom";
+
+export interface DrawerProps {
+  open: boolean;
+  title: StrictReactNode;
+
+  /**
+   * The width or heigh (depending on `position`) of the Drawer.
+   *
+   * If not set then the Drawer will be resizable.
+   */
+  size?: string; // e.g. 50%, 500px, etc.
+  usePortal?: boolean;
+  className?: string | object;
+  contentClass?: string | object;
+  position?: DrawerPosition;
+  animation?: AnimateName;
+  onClose?: () => void;
+  toolbar?: StrictReactNode;
+  children?: StrictReactNode;
+  "data-testid"?: string;
+  testIdForClose?: string;
+}
+
+const defaultProps = {
+  position: "right",
+  animation: "slide-right",
+  usePortal: false,
+  onClose: noop,
+};
+
+interface State {
+  width: number;
+}
+
+export const resizingAnchorProps: Record<DrawerPosition, [ResizeDirection, ResizeSide, ResizeGrowthDirection]> = {
+  right: [ResizeDirection.HORIZONTAL, ResizeSide.LEADING, ResizeGrowthDirection.RIGHT_TO_LEFT],
+  left: [ResizeDirection.HORIZONTAL, ResizeSide.TRAILING, ResizeGrowthDirection.LEFT_TO_RIGHT],
+  top: [ResizeDirection.VERTICAL, ResizeSide.TRAILING, ResizeGrowthDirection.TOP_TO_BOTTOM],
+  bottom: [ResizeDirection.VERTICAL, ResizeSide.LEADING, ResizeGrowthDirection.BOTTOM_TO_TOP],
+};
+
+interface Dependencies {
+  history: History;
+  drawerStorage: StorageLayer<{ width: number }>;
+}
+
+class NonInjectedDrawer extends React.Component<DrawerProps & Dependencies & typeof defaultProps, State> {
+  static defaultProps = defaultProps as object;
+
+  private mouseDownTarget: HTMLElement | null = null;
+  private contentElem: HTMLElement | null = null;
+  private scrollElem: HTMLElement | null = null;
+  private scrollPos = new Map<string, number>();
+
+  private stopListenLocation = this.props.history.listen(() => {
+    this.restoreScrollPos();
+  });
+
+  public state = {
+    width: this.props.drawerStorage.get().width,
+  };
+
+  componentDidMount() {
+    // Using window target for events to make sure they will be catched after other places (e.g. Dialog)
+    window.addEventListener("mousedown", this.onMouseDown);
+    window.addEventListener("click", this.onClickOutside);
+    window.addEventListener("keydown", this.onEscapeKey);
+    window.addEventListener("click", this.fixUpTripleClick);
+  }
+
+  componentWillUnmount() {
+    this.stopListenLocation();
+    window.removeEventListener("mousedown", this.onMouseDown);
+    window.removeEventListener("click", this.onClickOutside);
+    window.removeEventListener("click", this.fixUpTripleClick);
+    window.removeEventListener("keydown", this.onEscapeKey);
+  }
+
+  resizeWidth = (width: number) => {
+    this.setState({ width });
+    this.props.drawerStorage.merge({ width });
+  };
+
+  fixUpTripleClick = (ev: MouseEvent) => {
+    // detail: A count of consecutive clicks that happened in a short amount of time
+    if (ev.detail === 3) {
+      const selection = window.getSelection();
+      const isSelectingChildrenOfInputLabel = selection?.anchorNode instanceof HTMLLabelElement;
+
+      if (selection?.anchorNode?.parentNode && !isSelectingChildrenOfInputLabel) {
+        selection.selectAllChildren(selection.anchorNode.parentNode);
+      }
+    }
+  };
+
+  saveScrollPos = () => {
+    const key = this.props.history.location.key;
+
+    if (this.scrollElem && key) {
+      this.scrollPos.set(key, this.scrollElem.scrollTop);
+    }
+  };
+
+  restoreScrollPos = () => {
+    const key = this.props.history.location.key;
+
+    if (this.scrollElem && key) {
+      this.scrollElem.scrollTop = this.scrollPos.get(key) || 0;
+    }
+  };
+
+  onEscapeKey = (evt: KeyboardEvent) => {
+    if (!this.props.open) {
+      return;
+    }
+
+    if (evt.code === "Escape") {
+      this.close();
+    }
+  };
+
+  onClickOutside = (evt: MouseEvent) => {
+    const {
+      contentElem,
+      mouseDownTarget,
+      close,
+      props: { open },
+    } = this;
+
+    if (!open || evt.defaultPrevented || contentElem?.contains(mouseDownTarget)) {
+      return;
+    }
+    const clickedElem = evt.target as HTMLElement;
+    // A click that re-rendered its target before reaching window, such as one
+    // opening details, leaves it detached, so where it was is no longer known.
+    const isOutsideAnyDrawer = clickedElem.isConnected && !clickedElem.closest(".Drawer");
+
+    if (isOutsideAnyDrawer) {
+      close();
+    }
+    this.mouseDownTarget = null;
+  };
+
+  onMouseDown = (evt: MouseEvent) => {
+    if (this.props.open) {
+      this.mouseDownTarget = evt.target as HTMLElement;
+    }
+  };
+
+  close = () => {
+    const { open, onClose } = this.props;
+
+    if (open) onClose();
+  };
+
+  getTitleToCopy = (title: string) => {
+    const itemName = title.split(":").splice(1).join(":") || title; // copy whole if no :
+
+    return itemName.trim();
+  };
+
+  render() {
+    const {
+      className,
+      contentClass,
+      animation,
+      open,
+      position,
+      title,
+      children,
+      toolbar,
+      size,
+      usePortal,
+      "data-testid": testId,
+      testIdForClose,
+    } = this.props;
+    const { width } = this.state;
+    const canCopyTitle = typeof title === "string" && title.length > 0;
+    const [direction, placement, growthDirection] = resizingAnchorProps[position];
+    const drawerSize = size || `${width}px`;
+
+    const drawer = (
+      <Animate name={animation} enter={open}>
+        <div
+          className={cssNames("Drawer", className, position)}
+          style={{ "--size": drawerSize } as React.CSSProperties}
+          ref={(e) => {
+            this.contentElem = e;
+          }}
+          data-testid={testId}
+        >
+          <div className="drawer-wrapper flex flex-col">
+            <div className="drawer-title flex items-center">
+              <div className="drawer-title-text flex gap-2 items-center">
+                {title}
+                {canCopyTitle && <CopyToClipboardIcon getText={() => this.getTitleToCopy(title)} />}
+              </div>
+              {toolbar}
+              <Icon material="close" tooltip="Close" onClick={this.close} data-testid={testIdForClose} />
+            </div>
+            <div
+              className={cssNames("drawer-content flex flex-col grow shrink-0 basis-0", contentClass)}
+              onScroll={this.saveScrollPos}
+              ref={(e) => {
+                this.scrollElem = e;
+              }}
+            >
+              {children}
+            </div>
+          </div>
+          {!size && (
+            <ResizingAnchor
+              direction={direction}
+              placement={placement}
+              growthDirection={growthDirection}
+              getCurrentExtent={() => width}
+              onDrag={this.resizeWidth}
+              onDoubleClick={() => this.resizeWidth(defaultDrawerWidth)}
+              minExtent={300}
+              maxExtent={window.innerWidth * 0.9}
+            />
+          )}
+        </div>
+      </Animate>
+    );
+
+    return usePortal ? createPortal(drawer, document.body) : drawer;
+  }
+}
+
+export const Drawer = withInjectables<Dependencies, DrawerProps>(
+  NonInjectedDrawer as React.ElementType<DrawerProps & Dependencies>,
+  {
+    getProps: (di, props) => ({
+      ...props,
+      history: di.inject(historyInjectionToken),
+      drawerStorage: di.inject(drawerStorageInjectable),
+    }),
+  },
+);

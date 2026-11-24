@@ -1,0 +1,53 @@
+{
+  "name": "@freelensapp/react-application",
+  "version": "2.1.1-0",
+  "private": true,
+  "description": "Package for React Application",
+  "homepage": "https://freelens.app",
+  "bugs": {
+    "url": "https://github.com/freelensapp/freelens/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/freelensapp/freelens.git"
+  },
+  "license": "MIT",
+  "type": "module",
+  "author": {
+    "name": "Freelens Authors",
+    "email": "freelens@freelens.app"
+  },
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "scripts": {
+    "clean:dist": "pnpm dlx rimraf@6.1.4 dist",
+    "test:unit": "vitest run -c ../../../vitest.config.ts --project @freelensapp/react-application"
+  },
+  "dependencies": {
+    "@freelensapp/application": "workspace:^",
+    "@freelensapp/feature-core": "workspace:^",
+    "@ogre-tools/injectable": "catalog:",
+    "@ogre-tools/injectable-extension-for-mobx": "catalog:",
+    "@ogre-tools/injectable-react": "catalog:",
+    "mobx": "catalog:",
+    "mobx-react": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@freelensapp/react-testing-library-discovery": "workspace:^",
+    "@freelensapp/typescript": "workspace:^",
+    "@freelensapp/utilities": "workspace:^",
+    "@ogre-tools/fp": "catalog:",
+    "@testing-library/react": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "jsdom": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

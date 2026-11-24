@@ -1,0 +1,36 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import { getOrInsert, getOrInsertMap } from "@freelensapp/utilities";
+import { getInjectable } from "@ogre-tools/injectable";
+import { computedInjectManyInjectionToken } from "@ogre-tools/injectable-extension-for-mobx";
+import { computed } from "mobx";
+import { customCatalogCategoryColumnInjectionToken } from "./columns/custom-token";
+
+import type { RegisteredAdditionalCategoryColumn } from "./custom-category-columns";
+
+const categoryColumnsInjectable = getInjectable({
+  id: "category-columns",
+  instantiate: (di) => {
+    const computedInjectMany = di.inject(computedInjectManyInjectionToken);
+    const columnRegistrations = computedInjectMany(customCatalogCategoryColumnInjectionToken);
+
+    return computed(() => {
+      const res = new Map<string, Map<string, RegisteredAdditionalCategoryColumn[]>>();
+
+      for (const { group, kind, registration } of columnRegistrations.get()) {
+        const byGroup = getOrInsertMap(res, group);
+        const byKind = getOrInsert(byGroup, kind, []);
+
+        byKind.push(registration);
+      }
+
+      return res;
+    });
+  },
+});
+
+export default categoryColumnsInjectable;

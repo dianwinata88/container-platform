@@ -1,0 +1,100 @@
+{
+  "name": "@freelensapp/extensions",
+  "version": "2.1.1-0",
+  "description": "Freelens - Free IDE for Kubernetes: extensions",
+  "homepage": "https://freelens.app",
+  "bugs": {
+    "url": "https://github.com/freelensapp/freelens/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/freelensapp/freelens.git"
+  },
+  "license": "MIT",
+  "type": "module",
+  "author": {
+    "name": "Freelens Authors",
+    "email": "freelens@freelens.app"
+  },
+  "main": "./src/extension-api.ts",
+  "types": "./src/extension-api.ts",
+  "files": [
+    "dist/extension-api.js",
+    "dist/extension-api.d.ts"
+  ],
+  "scripts": {
+    "build": "pnpm build:dist",
+    "build:dist": "pnpm build:dist:declarations && pnpm build:dist:bundle && pnpm build:dist:shim",
+    "build:dist:declarations": "node scripts/generate-dts-tsconfig.mjs && tsc -p tsconfig.dts.generated.json",
+    "build:dist:bundle": "rolldown -c rolldown.dts.config.mjs",
+    "build:dist:shim": "node scripts/build-shim.mjs",
+    "clean:dist": "pnpm dlx rimraf@6.1.4 dist dist-types",
+    "prepack": "pnpm build:dist"
+  },
+  "dependencies": {
+    "chart.js": "catalog:extensions",
+    "conf": "catalog:extensions",
+    "es-toolkit": "catalog:extensions",
+    "immer": "catalog:extensions",
+    "react-select": "catalog:extensions",
+    "rfc6902": "catalog:extensions"
+  },
+  "devDependencies": {
+    "@freelensapp/core": "workspace:^",
+    "electron": "catalog:",
+    "rolldown": "catalog:",
+    "rolldown-plugin-dts": "catalog:",
+    "typescript": "catalog:"
+  },
+  "peerDependencies": {
+    "@types/react": "catalog:extensions",
+    "@types/react-dom": "catalog:extensions",
+    "electron": ">=43.0.0",
+    "mobx": "catalog:extensions",
+    "mobx-react": "catalog:extensions",
+    "monaco-editor": "catalog:extensions",
+    "react": "catalog:extensions",
+    "react-dom": "catalog:extensions"
+  },
+  "peerDependenciesMeta": {
+    "@types/react": {
+      "optional": true
+    },
+    "@types/react-dom": {
+      "optional": true
+    },
+    "electron": {
+      "optional": true
+    },
+    "mobx": {
+      "optional": true
+    },
+    "mobx-react": {
+      "optional": true
+    },
+    "monaco-editor": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    }
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/",
+    "main": "./dist/extension-api.js",
+    "types": "./dist/extension-api.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/extension-api.d.ts",
+        "default": "./dist/extension-api.js"
+      },
+      "./package.json": "./package.json"
+    }
+  },
+  "copyright": "© 2024-2026 Freelens Authors",
+  "productName": "Freelens extensions"
+}

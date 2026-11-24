@@ -1,0 +1,526 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import { computed } from "mobx";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { getDiForUnitTesting } from "../../getDiForUnitTesting";
+import activeThemeInjectable from "../../themes/active.injectable";
+import { renderFor } from "../test-utils/renderFor";
+import { BarChart } from "./bar-chart";
+import { insertGapsInTimeSeries } from "./time-series-gaps";
+
+const chartMock = vi.fn();
+
+// Local-time formatters mirroring bar-chart.tsx so expectations stay
+// deterministic regardless of the host locale (previously via moment).
+const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const pad2 = (value: number): string => String(value).padStart(2, "0");
+
+const formatHoursMinutes = (timestamp: number): string => {
+  const date = new Date(timestamp);
+  return `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+};
+
+const formatMonthDay = (timestamp: number): string => {
+  const date = new Date(timestamp);
+  return `${MONTHS_SHORT[date.getMonth()]} ${pad2(date.getDate())}`;
+};
+
+const formatMonthDayTime = (timestamp: number): string => {
+  const date = new Date(timestamp);
+  return `${MONTHS_SHORT[date.getMonth()]} ${pad2(date.getDate())}, ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+};
+
+vi.mock("./chart", () => ({
+  ChartKind: {
+    BAR: "bar",
+    LINE: "line",
+  },
+  Chart: (props: unknown) => {
+    chartMock(props);
+
+    return null;
+  },
+}));
+
+describe("BarChart", () => {
+  beforeEach(() => {
+    chartMock.mockReset();
+  });
+
+  it("keeps the shared parser strict while formatting stringified millisecond tick values correctly", () => {
+    const di = getDiForUnitTesting();
+    const render = renderFor(di);
+
+    di.override(activeThemeInjectable, () =>
+      computed(
+        () =>
+          ({
+            colors: {
+              textColorPrimary: "#fff",
+              borderFaintColor: "#000",
+              chartStripesColor: "#111",
+            },
+          }) as never,
+      ),
+    );
+
+    render(
+      <BarChart
+        data={{
+          datasets: [
+            {
+              id: "dataset-id",
+              label: "Dataset",
+              borderColor: "#00a7a0",
+              data: [{ x: 1_710_000_000_000, y: "1" }],
+            },
+          ],
+        }}
+      />,
+    );
+
+    const options = chartMock.mock.calls[0][0].options;
+    const parser = options.scales.x.time.parser;
+    const tickCallback = options.scales.x.ticks.callback;
+    const chartJsTicks = [{ value: "1710000000000", major: false }];
+
+    expect(parser(1_710_000_000_000)).toBe(1_710_000_000_000);
+    expect(parser("1710000000000")).toBeNaN();
+    expect(parser("2024-01-01T00:00:00Z")).toBe(1_704_067_200_000);
+    expect(tickCallback("17:00", 0, chartJsTicks)).toBe(formatHoursMinutes(1_710_000_000_000));
+  });
+
+  it("uses day-sized x-axis ticks for large custom ranges", () => {
+    const di = getDiForUnitTesting();
+    const render = renderFor(di);
+
+    di.override(activeThemeInjectable, () =>
+      computed(
+        () =>
+          ({
+            colors: {
+              textColorPrimary: "#fff",
+              borderFaintColor: "#000",
+              chartStripesColor: "#111",
+            },
+          }) as never,
+      ),
+    );
+
+    render(
+      <BarChart
+        minTime={1_704_067_200}
+        maxTime={1_704_931_200}
+        data={{
+          datasets: [
+            {
+              id: "dataset-id",
+              label: "Dataset",
+              borderColor: "#00a7a0",
+              data: [
+                { x: 1_704_067_200_000, y: "1" },
+                { x: 1_704_499_200_000, y: "2" },
+                { x: 1_704_931_200_000, y: "3" },
+              ],
+            },
+          ],
+        }}
+      />,
+    );
+
+    const options = chartMock.mock.calls[0][0].options;
+    const tickCallback = options.scales.x.ticks.callback;
+    const chartJsTicks = [
+      { value: "1704067200000", major: false },
+      { value: "1704499200000", major: false },
+      { value: "1704931200000", major: false },
+    ];
+
+    expect(options.scales.x.time.unit).toBe("day");
+    expect(tickCallback("1704067200000", 0, chartJsTicks)).toBe(formatMonthDay(1_704_067_200_000));
+    expect(tickCallback("1704499200000", 1, chartJsTicks)).toBe(formatMonthDay(1_704_499_200_000));
+    expect(tickCallback("1704931200000", 2, chartJsTicks)).toBe(formatMonthDay(1_704_931_200_000));
+  });
+
+  it("formats tooltip titles as readable dates and skips future timestamps", () => {
+    const di = getDiForUnitTesting();
+    const render = renderFor(di);
+
+    di.override(activeThemeInjectable, () =>
+      computed(
+        () =>
+          ({
+            colors: {
+              textColorPrimary: "#fff",
+              borderFaintColor: "#000",
+              chartStripesColor: "#111",
+            },
+          }) as never,
+      ),
+    );
+
+    render(
+      <BarChart
+        data={{
+          datasets: [
+            {
+              id: "dataset-id",
+              label: "Dataset",
+              borderColor: "#00a7a0",
+              data: [{ x: 1_710_000_000_000, y: "1" }],
+            },
+          ],
+        }}
+      />,
+    );
+
+    const options = chartMock.mock.calls[0][0].options;
+    const tooltipTitle = options.plugins.tooltip.callbacks.title;
+
+    expect(tooltipTitle([{ parsed: { x: "1710000000000" } }])).toBe(formatMonthDayTime(1_710_000_000_000));
+    expect(tooltipTitle([{ parsed: { x: 1_710_000_000_000 } }])).toBe(formatMonthDayTime(1_710_000_000_000));
+    expect(tooltipTitle([{ parsed: { x: "9999999999999" } }])).toBe("");
+    expect(tooltipTitle([])).toBe("");
+  });
+
+  /**
+   * With the default `intersect` of Chart.js the values showed only with the
+   * cursor on a sample: never on the stepped line of a range of a day or more,
+   * which draws no points, and not between the bars or above a short one.
+   */
+  describe("the values under the cursor", () => {
+    const renderRange = (minTime: number, maxTime: number) => {
+      const di = getDiForUnitTesting();
+      const render = renderFor(di);
+
+      di.override(activeThemeInjectable, () =>
+        computed(
+          () =>
+            ({
+              colors: {
+                textColorPrimary: "#fff",
+                borderFaintColor: "#000",
+                chartStripesColor: "#111",
+              },
+            }) as never,
+        ),
+      );
+
+      render(
+        <BarChart
+          minTime={minTime}
+          maxTime={maxTime}
+          data={{
+            datasets: [
+              {
+                id: "dataset-id",
+                label: "Dataset",
+                borderColor: "#00a7a0",
+                data: [
+                  { x: minTime * 1000, y: "1" },
+                  { x: ((minTime + maxTime) / 2) * 1000, y: "2" },
+                  { x: maxTime * 1000, y: "3" },
+                ],
+              },
+            ],
+          }}
+        />,
+      );
+
+      return chartMock.mock.calls[0][0];
+    };
+
+    it.each([
+      ["the stepped line of a range of a day or more", 2 * 86_400, "line"],
+      ["the bars of a shorter range", 3_600, "bar"],
+    ])("show at the time under the cursor on %s", (_name, range, chartType) => {
+      const { type, options } = renderRange(1_704_067_200, 1_704_067_200 + range);
+
+      expect(type).toBe(chartType);
+      expect(options.interaction).toEqual({ mode: "index", intersect: false });
+      expect(options.plugins.tooltip.mode).toBe("index");
+    });
+  });
+  describe("gaps in time series", () => {
+    const step = 600_000; // 10 minutes
+    const t0 = 1_704_067_200_000;
+
+    it("inserts a null point after a sample followed by a gap", () => {
+      const data = [
+        { x: t0, y: "1" },
+        { x: t0 + step, y: "2" },
+        { x: t0 + 10 * step, y: "3" },
+        { x: t0 + 11 * step, y: "4" },
+      ];
+
+      expect(insertGapsInTimeSeries(data, step)).toEqual([
+        { x: t0, y: "1" },
+        { x: t0 + step, y: "2" },
+        { x: t0 + 2 * step, y: null },
+        { x: t0 + 10 * step, y: "3" },
+        { x: t0 + 11 * step, y: "4" },
+      ]);
+    });
+
+    it("treats a single missing sample as a gap", () => {
+      const data = [
+        { x: t0, y: "1" },
+        { x: t0 + 2 * step, y: "2" },
+      ];
+
+      expect(insertGapsInTimeSeries(data, step)).toEqual([
+        { x: t0, y: "1" },
+        { x: t0 + step, y: null },
+        { x: t0 + 2 * step, y: "2" },
+      ]);
+    });
+
+    it("holds the value of a sample followed by a gap for one step when asked", () => {
+      const data = [
+        { x: t0, y: "1" },
+        { x: t0 + step, y: "2" },
+        { x: t0 + 10 * step, y: "3" },
+      ];
+
+      expect(insertGapsInTimeSeries(data, step, true)).toEqual([
+        { x: t0, y: "1" },
+        { x: t0 + step, y: "2" },
+        { x: t0 + 2 * step, y: "2" },
+        { x: t0 + 2 * step, y: null },
+        { x: t0 + 10 * step, y: "3" },
+        { x: t0 + 11 * step, y: "3" },
+      ]);
+    });
+
+    it("holds the last sample only when it follows a gap", () => {
+      const data = [
+        { x: t0, y: "1" },
+        { x: t0 + 10 * step, y: "2" },
+        { x: t0 + 11 * step, y: "3" },
+      ];
+
+      expect(insertGapsInTimeSeries(data, step, true)).toEqual([
+        { x: t0, y: "1" },
+        { x: t0 + step, y: "1" },
+        { x: t0 + step, y: null },
+        { x: t0 + 10 * step, y: "2" },
+        { x: t0 + 11 * step, y: "3" },
+      ]);
+    });
+
+    it("holds the last sample over the step before it when it is at the end of the axis", () => {
+      const data = [
+        { x: t0, y: "1" },
+        { x: t0 + 10 * step, y: "2" },
+      ];
+
+      expect(insertGapsInTimeSeries(data, step, true, t0 + 10 * step)).toEqual([
+        { x: t0, y: "1" },
+        { x: t0 + step, y: "1" },
+        { x: t0 + step, y: null },
+        { x: t0 + 9 * step, y: "2" },
+        { x: t0 + 10 * step, y: "2" },
+      ]);
+    });
+
+    it("holds the last sample forward when the axis has room for it", () => {
+      const data = [
+        { x: t0, y: "1" },
+        { x: t0 + 10 * step, y: "2" },
+      ];
+
+      expect(insertGapsInTimeSeries(data, step, true, t0 + 11 * step)).toEqual([
+        { x: t0, y: "1" },
+        { x: t0 + step, y: "1" },
+        { x: t0 + step, y: null },
+        { x: t0 + 10 * step, y: "2" },
+        { x: t0 + 11 * step, y: "2" },
+      ]);
+    });
+
+    it("does not hold the last sample back over the previous sample", () => {
+      const data = [
+        { x: t0, y: "1" },
+        { x: t0 + 1.6 * step, y: "2" },
+      ];
+
+      expect(insertGapsInTimeSeries(data, step, true, t0 + 1.6 * step)).toEqual([
+        { x: t0, y: "1" },
+        { x: t0 + step, y: "1" },
+        { x: t0 + step, y: null },
+        { x: t0 + step, y: "2" },
+        { x: t0 + 1.6 * step, y: "2" },
+      ]);
+    });
+
+    it("keeps contiguous data unchanged", () => {
+      const data = [
+        { x: t0, y: "1" },
+        { x: t0 + step, y: "2" },
+        { x: t0 + 2 * step, y: "3" },
+      ];
+
+      expect(insertGapsInTimeSeries(data, step)).toEqual(data);
+      expect(insertGapsInTimeSeries(data, undefined)).toEqual(data);
+    });
+
+    it("breaks the line in the rendered datasets and keeps the stepped style based on the sample step", () => {
+      const di = getDiForUnitTesting();
+      const render = renderFor(di);
+
+      di.override(activeThemeInjectable, () =>
+        computed(
+          () =>
+            ({
+              colors: {
+                textColorPrimary: "#fff",
+                borderFaintColor: "#000",
+                chartStripesColor: "#111",
+              },
+            }) as never,
+        ),
+      );
+
+      // 4 hours range with a 1 minute step, but only 3 samples because of an outage:
+      // the step must come from the samples, not from range / number of samples.
+      const minuteStep = 60_000;
+
+      render(
+        <BarChart
+          minTime={t0 / 1000}
+          maxTime={t0 / 1000 + 4 * 60 * 60}
+          data={{
+            datasets: [
+              {
+                id: "dataset-id",
+                label: "Dataset",
+                borderColor: "#00a7a0",
+                data: [
+                  { x: t0, y: "1" },
+                  { x: t0 + minuteStep, y: "2" },
+                  { x: t0 + 200 * minuteStep, y: "3" },
+                ],
+              },
+            ],
+          }}
+        />,
+      );
+
+      const { type, data } = chartMock.mock.calls[0][0];
+
+      expect(type).toBe("bar");
+      expect(data.datasets[0].data).toEqual([
+        { x: t0, y: "1" },
+        { x: t0 + minuteStep, y: "2" },
+        { x: t0 + 2 * minuteStep, y: null },
+        { x: t0 + 200 * minuteStep, y: "3" },
+      ]);
+    });
+
+    it("breaks the line between isolated samples using the step passed by the caller", () => {
+      const di = getDiForUnitTesting();
+      const render = renderFor(di);
+
+      di.override(activeThemeInjectable, () =>
+        computed(
+          () =>
+            ({
+              colors: {
+                textColorPrimary: "#fff",
+                borderFaintColor: "#000",
+                chartStripesColor: "#111",
+              },
+            }) as never,
+        ),
+      );
+
+      // 25 hours range is queried with a 1 hour step. The cluster was up only for
+      // short periods, so there are just two samples 23 hours apart: their distance
+      // is not the step and must not hide the gap between them.
+      const hourStep = 3_600_000;
+
+      render(
+        <BarChart
+          minTime={t0 / 1000}
+          maxTime={t0 / 1000 + 25 * 60 * 60}
+          step={60 * 60}
+          data={{
+            datasets: [
+              {
+                id: "dataset-id",
+                label: "Dataset",
+                borderColor: "#00a7a0",
+                data: [
+                  { x: t0 + hourStep, y: "8" },
+                  { x: t0 + 24 * hourStep, y: "8" },
+                ],
+              },
+            ],
+          }}
+        />,
+      );
+
+      const { type, data } = chartMock.mock.calls[0][0];
+
+      expect(type).toBe("line");
+      expect(data.datasets[0].data).toEqual([
+        { x: t0 + hourStep, y: "8" },
+        { x: t0 + 2 * hourStep, y: "8" },
+        { x: t0 + 2 * hourStep, y: null },
+        { x: t0 + 24 * hourStep, y: "8" },
+        { x: t0 + 25 * hourStep, y: "8" },
+      ]);
+    });
+
+    it("infers the step from the samples when the caller does not pass it", () => {
+      const di = getDiForUnitTesting();
+      const render = renderFor(di);
+
+      di.override(activeThemeInjectable, () =>
+        computed(
+          () =>
+            ({
+              colors: {
+                textColorPrimary: "#fff",
+                borderFaintColor: "#000",
+                chartStripesColor: "#111",
+              },
+            }) as never,
+        ),
+      );
+
+      // Without the query step the smallest distance between samples is used, so
+      // two samples 23 hours apart are taken as contiguous.
+      const hourStep = 3_600_000;
+      const samples = [
+        { x: t0 + hourStep, y: "8" },
+        { x: t0 + 24 * hourStep, y: "8" },
+      ];
+
+      render(
+        <BarChart
+          minTime={t0 / 1000}
+          maxTime={t0 / 1000 + 25 * 60 * 60}
+          data={{
+            datasets: [
+              {
+                id: "dataset-id",
+                label: "Dataset",
+                borderColor: "#00a7a0",
+                data: samples,
+              },
+            ],
+          }}
+        />,
+      );
+
+      const { type, data } = chartMock.mock.calls[0][0];
+
+      expect(type).toBe("line");
+      expect(data.datasets[0].data).toEqual(samples);
+    });
+  });
+});

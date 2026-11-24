@@ -1,0 +1,56 @@
+{
+  "name": "@freelensapp/icon",
+  "version": "2.1.1-0",
+  "private": true,
+  "description": "Highly extendable icon in the Freelens.",
+  "homepage": "https://freelens.app",
+  "bugs": {
+    "url": "https://github.com/freelensapp/freelens/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/freelensapp/freelens.git"
+  },
+  "license": "MIT",
+  "type": "module",
+  "author": {
+    "name": "Freelens Authors",
+    "email": "freelens@freelens.app"
+  },
+  "exports": {
+    ".": "./index.ts",
+    "./styles": "./src/icon.scss",
+    "./icons/*.svg": "./assets/*.svg"
+  },
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "files": [
+    "assets"
+  ],
+  "scripts": {},
+  "dependencies": {
+    "@freelensapp/logger": "workspace:^",
+    "@freelensapp/routing": "workspace:^",
+    "@freelensapp/tooltip": "workspace:^",
+    "@freelensapp/utilities": "workspace:^",
+    "@ogre-tools/injectable": "catalog:",
+    "@ogre-tools/injectable-react": "catalog:",
+    "mobx": "catalog:",
+    "mobx-react": "catalog:",
+    "react": "catalog:"
+  },
+  "devDependencies": {
+    "@freelensapp/feature-core": "workspace:^",
+    "@freelensapp/test-utils": "workspace:^",
+    "@freelensapp/typescript": "workspace:^",
+    "@ogre-tools/injectable-extension-for-mobx": "catalog:",
+    "@testing-library/jest-dom": "catalog:",
+    "@types/react": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

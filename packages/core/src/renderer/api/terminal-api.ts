@@ -1,0 +1,230 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import url from "node:url";
+import { isEqual, once } from "es-toolkit";
+import { observable } from "mobx";
+import { TerminalChannels, type TerminalMessage, type TerminalStatusLevel } from "../../common/terminal/channels";
+import { WebSocketApi } from "./websocket-api";
+
+import type { Logger } from "@freelensapp/logger";
+
+import type { WebSocketApiDependencies, WebSocketEvents } from "./websocket-api";
+
+enum TerminalColor {
+  RED = "\u001b[31m",
+  GREEN = "\u001b[32m",
+  YELLOW = "\u001b[33m",
+  BLUE = "\u001b[34m",
+  MAGENTA = "\u001b[35m",
+  CYAN = "\u001b[36m",
+  GRAY = "\u001b[90m",
+  LIGHT_GRAY = "\u001b[37m",
+  NO_COLOR = "\u001b[0m",
+}
+
+/**
+ * Erases the line the cursor is on and parks the cursor at its start, so that
+ * whatever is written next replaces it entirely.
+ */
+export const eraseTerminalLine = "\u001b[2K\r";
+
+export interface TerminalApiQuery extends Record<string, string | string[] | undefined> {
+  id: string;
+  node?: string;
+  type?: string;
+}
+
+export interface TerminalEvents extends WebSocketEvents {
+  ready: () => void;
+  connected: () => void;
+  /**
+   * A startup status line. Deliberately separate from `data`: `onReady` is
+   * prepended to `data`, so routing status through it would mark the session
+   * as ready long before the PTY exists.
+   */
+  status: (data: string, level: TerminalStatusLevel) => void;
+}
+
+/**
+ * Mints the single use token that authorizes one shell. What it is scoped to -
+ * a cluster or nothing at all - is the injected implementation's business, so
+ * that a terminal can also live outside of a cluster frame.
+ */
+export type RequestShellToken = (tabId: string) => Promise<Uint8Array>;
+
+export interface TerminalApiDependencies extends WebSocketApiDependencies {
+  readonly logger: Logger;
+  requestShellToken: RequestShellToken;
+}
+
+export class TerminalApi extends WebSocketApi<TerminalEvents> {
+  protected size?: { width: number; height: number };
+
+  @observable public accessor isReady = false;
+
+  constructor(
+    protected readonly dependencies: TerminalApiDependencies,
+    protected readonly query: TerminalApiQuery,
+  ) {
+    super(dependencies, {
+      flushOnOpen: false,
+      pingInterval: 30,
+    });
+
+    if (query.node) {
+      query.type ||= "node";
+    }
+  }
+
+  async connect() {
+    if (!this.socket) {
+      /**
+       * Only emit this message if we are not "reconnecting", so as to keep the
+       * output display clean when the computer wakes from sleep
+       */
+      this.emitTerminalStatus("Connecting ...", "info");
+    }
+
+    const authTokenArray = await this.dependencies.requestShellToken(this.query.id);
+
+    if (!(authTokenArray instanceof Uint8Array)) {
+      throw new TypeError("ShellApi token is not a Uint8Array");
+    }
+
+    const { hostname, protocol, port } = location;
+    const socketUrl = url.format({
+      protocol: protocol.includes("https") ? "wss" : "ws",
+      hostname,
+      port,
+      pathname: "/api",
+      query: {
+        ...this.query,
+        shellToken: Buffer.from(authTokenArray).toString("base64"),
+      },
+      slashes: true,
+    });
+
+    // A session that the main process resumes, as after a reload, sends its
+    // last output again right after "connected"
+    const onReady = once(() => {
+      this.isReady = true;
+      this.emit("ready");
+      this.removeListener("data", onReady);
+      this.removeListener("connected", onReady);
+      this.flush();
+    });
+
+    this.prependListener("data", onReady);
+    this.prependListener("connected", onReady);
+
+    super.connect(socketUrl);
+  }
+
+  sendMessage(message: TerminalMessage) {
+    const command = JSON.stringify(message);
+
+    /**
+     * The session reads the websocket only once its shell process exists,
+     * which can be long after the socket opens (kubectl download, node shell
+     * pod), and drops whatever arrives before. Hold everything but pings until
+     * then; `onReady` flushes it.
+     */
+    if (!this.isReady && message.type !== TerminalChannels.PING) {
+      this.pendingCommands.push(command);
+    } else {
+      this.send(command);
+    }
+  }
+
+  sendTerminalSize(cols: number, rows: number) {
+    const newSize = { width: cols, height: rows };
+
+    if (!isEqual(this.size, newSize)) {
+      this.sendMessage({
+        type: TerminalChannels.RESIZE,
+        data: newSize,
+      });
+      this.size = newSize;
+    }
+  }
+
+  protected _onMessage({ data, ...evt }: MessageEvent<string>): void {
+    try {
+      const message = JSON.parse(data) as TerminalMessage;
+
+      switch (message.type) {
+        case TerminalChannels.STDOUT:
+          super._onMessage({ data: message.data, ...evt });
+          break;
+        case TerminalChannels.STATUS:
+          /**
+           * Never routed through "data": `onReady` is prepended to that event,
+           * so a status frame would mark the session as ready before the shell
+           * process even exists.
+           */
+          this.emitTerminalStatus(message.data.message, message.data.level);
+          break;
+        case TerminalChannels.CONNECTED:
+          this.emit("connected");
+          break;
+        default:
+          this.dependencies.logger.warn(`[TERMINAL-API]: unknown or unhandleable message type`, message);
+          break;
+      }
+    } catch (error) {
+      this.dependencies.logger.error(`[TERMINAL-API]: failed to handle message`, error);
+    }
+  }
+
+  protected _onOpen(evt: Event) {
+    // The session on the other end knows no size yet: send the last one the
+    // terminal reported, or a placeholder until fit() reports one.
+    const { width, height } = this.size ?? { width: 120, height: 80 };
+
+    this.size = undefined;
+    this.sendTerminalSize(width, height);
+    super._onOpen(evt);
+  }
+
+  protected _onClose(evt: CloseEvent) {
+    super._onClose(evt);
+    this.isReady = false;
+  }
+
+  /**
+   * Writes a single-line startup status.
+   *
+   * Every line is prefixed with `\x1b[2K\r`, which erases the line the cursor
+   * is on and parks it at the start, so no memory of the previous frame is
+   * needed here. An `info` line is left unterminated on purpose, so that the
+   * next frame overwrites it; an `error` line consumes its line with a final
+   * `\r\n` and therefore cannot be overwritten by what follows.
+   */
+  protected emitTerminalStatus(message: string, level: TerminalStatusLevel) {
+    const color = level === "error" ? TerminalColor.RED : TerminalColor.GRAY;
+    const line = `${eraseTerminalLine}${color}${message}${TerminalColor.NO_COLOR}`;
+
+    this.emit("status", level === "error" ? `${line}\r\n` : line, level);
+  }
+
+  protected emitStatus(data: string, options: { color?: TerminalColor; showTime?: boolean } = {}) {
+    const { color, showTime } = options;
+    const time = showTime ? `${(new Date()).toLocaleString()} ` : "";
+
+    if (color) {
+      data = `${color}${data}${TerminalColor.NO_COLOR}`;
+    }
+
+    this.emit("data", `${time}${data}\r\n`);
+  }
+
+  protected emitError(error: string) {
+    this.emitStatus(error, {
+      color: TerminalColor.RED,
+    });
+  }
+}

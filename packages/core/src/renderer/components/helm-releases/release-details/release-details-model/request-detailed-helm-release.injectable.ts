@@ -1,0 +1,50 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import { getInjectable } from "@ogre-tools/injectable";
+import requestHelmReleaseInjectable from "../../../../../features/helm-releases/renderer/request-helm-release.injectable";
+import { toHelmRelease } from "../../to-helm-release";
+
+import type { AsyncResult } from "@freelensapp/utilities";
+
+import type { HelmRelease } from "../../../../../common/k8s-api/endpoints/helm-releases.api";
+import type {
+  GetHelmReleaseArgs,
+  HelmReleaseDataWithResources,
+} from "../../../../../features/helm-releases/common/channels";
+
+export interface DetailedHelmRelease {
+  release: HelmRelease;
+  details: HelmReleaseDataWithResources;
+}
+
+export type RequestDetailedHelmRelease = (args: GetHelmReleaseArgs) => AsyncResult<DetailedHelmRelease>;
+
+const requestDetailedHelmReleaseInjectable = getInjectable({
+  id: "request-detailed-helm-release",
+
+  instantiate: (di): RequestDetailedHelmRelease => {
+    const requestHelmRelease = di.inject(requestHelmReleaseInjectable);
+
+    return async (args) => {
+      const detailsResult = await requestHelmRelease(args);
+
+      if (!detailsResult.callWasSuccessful) {
+        return detailsResult;
+      }
+
+      return {
+        callWasSuccessful: true,
+        response: {
+          release: toHelmRelease(detailsResult.response.listed),
+          details: detailsResult.response,
+        },
+      };
+    };
+  },
+});
+
+export default requestDetailedHelmReleaseInjectable;

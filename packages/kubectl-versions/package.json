@@ -1,0 +1,40 @@
+{
+  "name": "@freelensapp/kubectl-versions",
+  "version": "2.1.1-0",
+  "private": true,
+  "description": "Package of kubectl versions at build time",
+  "homepage": "https://freelens.app",
+  "bugs": {
+    "url": "https://github.com/freelensapp/freelens/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/freelensapp/freelens.git"
+  },
+  "license": "MIT",
+  "type": "module",
+  "author": {
+    "name": "Freelens Authors",
+    "email": "freelens@freelens.app"
+  },
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "scripts": {
+    "precompute-versions": "tsc --pretty --project build",
+    "compute-versions": "node ./build/compute-versions.mjs",
+    "preupdate-kubectl-checksums": "pnpm --filter @freelensapp/ensure-binaries build",
+    "update-kubectl-checksums": "update-kubectl-checksums --versions build/versions.json --checksums build/checksums.json"
+  },
+  "devDependencies": {
+    "@freelensapp/ensure-binaries": "workspace:^",
+    "@freelensapp/typescript": "workspace:^",
+    "fast-xml-parser": "catalog:",
+    "typescript": "catalog:",
+    "undici": "catalog:",
+    "verkit": "catalog:"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

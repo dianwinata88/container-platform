@@ -1,0 +1,77 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import "./pod-tolerations.scss";
+
+import { Table, TableCell, TableHead, TableRow } from "../table";
+
+import type { Toleration } from "@freelensapp/kube-object";
+
+export interface PodTolerationsProps {
+  tolerations: Toleration[];
+}
+
+enum sortBy {
+  Key = "key",
+  Operator = "operator",
+  Effect = "effect",
+  Seconds = "seconds",
+  Value = "value",
+}
+
+const getTableRow = (toleration: Toleration, index: number) => {
+  const { key, operator, effect, tolerationSeconds, value } = toleration;
+
+  return (
+    // Tolerations have no unique identifier, so key by position — a generated id would
+    // change on every render and force React to remount every row.
+    <TableRow key={`toleration-${index}`} sortItem={toleration} nowrap>
+      <TableCell className="key">{key}</TableCell>
+      <TableCell className="operator">{operator}</TableCell>
+      <TableCell className="value">{value}</TableCell>
+      <TableCell className="effect">{effect}</TableCell>
+      <TableCell className="seconds">{tolerationSeconds}</TableCell>
+    </TableRow>
+  );
+};
+
+export function PodTolerations({ tolerations }: PodTolerationsProps) {
+  return (
+    <Table
+      tableId="workloads_pod_tolerations"
+      selectable
+      items={tolerations}
+      scrollable={false}
+      sortable={{
+        [sortBy.Key]: (toleration) => toleration.key,
+        [sortBy.Operator]: (toleration) => toleration.operator,
+        [sortBy.Effect]: (toleration) => toleration.effect,
+        [sortBy.Seconds]: (toleration) => toleration.tolerationSeconds,
+      }}
+      sortSyncWithUrl={false}
+      className="PodTolerations"
+      renderRow={getTableRow}
+    >
+      <TableHead sticky={false}>
+        <TableCell className="key" sortBy={sortBy.Key}>
+          Key
+        </TableCell>
+        <TableCell className="operator" sortBy={sortBy.Operator}>
+          Operator
+        </TableCell>
+        <TableCell className="value" sortBy={sortBy.Value}>
+          Value
+        </TableCell>
+        <TableCell className="effect" sortBy={sortBy.Effect}>
+          Effect
+        </TableCell>
+        <TableCell className="seconds" sortBy={sortBy.Seconds}>
+          Seconds
+        </TableCell>
+      </TableHead>
+    </Table>
+  );
+}

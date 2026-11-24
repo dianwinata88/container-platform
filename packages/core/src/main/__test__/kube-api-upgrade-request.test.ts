@@ -1,0 +1,283 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("node:tls", () => {
+  const connect = vi.fn();
+
+  // Some modules in the graph import tls as a default import, so the mock has
+  // to provide the same surface under both shapes.
+  return { connect, default: { connect } };
+});
+
+import { EventEmitter } from "node:events";
+import { connect } from "node:tls";
+import { Cluster } from "../../common/cluster/cluster";
+import { apiKubePrefix } from "../../common/vars";
+import clusterApiUrlInjectable from "../../features/cluster/connections/main/api-url.injectable";
+import freelensK8sProxyManagerInjectable from "../cluster/freelens-k8s-proxy-manager.injectable";
+import freelensK8sProxyCertificateInjectable from "../freelens-k8s-proxy/freelens-k8s-proxy-certificate.injectable";
+import kubeApiUpgradeRequestInjectable from "../freelens-proxy/proxy-functions/kube-api-upgrade-request.injectable";
+import { getDiForUnitTesting } from "../getDiForUnitTesting";
+
+import type { MockedFunction } from "vitest";
+
+class MockSocket extends EventEmitter {
+  destroyed = false;
+  writable = true;
+  write = vi.fn(() => true);
+  end = vi.fn((_: string) => {
+    this.writable = false;
+  });
+  destroy = vi.fn(() => {
+    this.destroyed = true;
+    this.writable = false;
+  });
+  pause = vi.fn();
+  resume = vi.fn();
+  setKeepAlive = vi.fn();
+  setTimeout = vi.fn();
+}
+
+const mockConnectImplementation = (proxySocket: MockSocket) =>
+  ((..._args: unknown[]) => proxySocket as never) as unknown as typeof connect;
+
+describe("kube api upgrade request", () => {
+  it("forwards the upgrade request to the freelens-k8s-proxy", async () => {
+    const di = getDiForUnitTesting();
+    const connectMock = connect as MockedFunction<typeof connect>;
+    const proxySocket = new MockSocket();
+    const socket = new MockSocket();
+    const head = Buffer.from("buffered-head");
+    const cluster = new Cluster({
+      contextName: "kind-kind",
+      id: "cluster-id",
+      kubeConfigPath: "/some-kube-config-path",
+    });
+
+    di.override(clusterApiUrlInjectable, () => async () => new URL("https://cluster.example.test"));
+    di.override(freelensK8sProxyManagerInjectable, () => ({
+      getApiTarget: vi.fn(),
+      ensureFreelensK8sProxyUrl: vi.fn(async () => "https://127.0.0.1:9443/proxy-prefix"),
+      restart: vi.fn(),
+      ensureRunning: vi.fn(),
+      stop: vi.fn(),
+    }));
+    di.override(freelensK8sProxyCertificateInjectable, () =>
+      Promise.resolve({
+        cert: "some-cert",
+        private: "some-key",
+        public: "some-public-key",
+      }),
+    );
+
+    connectMock.mockImplementation(mockConnectImplementation(proxySocket));
+
+    const handleUpgrade = di.inject(kubeApiUpgradeRequestInjectable);
+
+    await handleUpgrade({
+      cluster,
+      head,
+      req: {
+        httpVersion: "1.1",
+        method: "POST",
+        rawHeaders: [
+          "Connection",
+          "Upgrade",
+          "Upgrade",
+          "SPDY/3.1",
+          "Host",
+          "ignored-host",
+          "Authorization",
+          "ignored-auth",
+        ],
+        url: `${apiKubePrefix}/api/v1/namespaces/default/pods/demo/exec?command=tar`,
+      } as never,
+      socket: socket as never,
+    });
+
+    expect(connectMock).toHaveBeenCalledWith({
+      ca: "some-cert",
+      host: "127.0.0.1",
+      port: 9443,
+    });
+
+    proxySocket.emit("secureConnect");
+
+    expect(proxySocket.write).toHaveBeenNthCalledWith(
+      1,
+      "POST /proxy-prefix/api/v1/namespaces/default/pods/demo/exec?command=tar HTTP/1.1\r\n",
+    );
+    expect(proxySocket.write).toHaveBeenNthCalledWith(2, "Host: cluster.example.test\r\n");
+    expect(proxySocket.write).toHaveBeenNthCalledWith(3, "Connection: Upgrade\r\n");
+    expect(proxySocket.write).toHaveBeenNthCalledWith(4, "Upgrade: SPDY/3.1\r\n");
+    expect(proxySocket.write).toHaveBeenNthCalledWith(5, "\r\n");
+    expect(proxySocket.write).toHaveBeenNthCalledWith(6, head);
+  });
+
+  it("applies backpressure from the freelens-k8s-proxy socket to the client socket", async () => {
+    const di = getDiForUnitTesting();
+    const connectMock = connect as MockedFunction<typeof connect>;
+    const proxySocket = new MockSocket();
+    const socket = new MockSocket();
+    const cluster = new Cluster({
+      contextName: "kind-kind",
+      id: "cluster-id",
+      kubeConfigPath: "/some-kube-config-path",
+    });
+
+    di.override(clusterApiUrlInjectable, () => async () => new URL("https://cluster.example.test"));
+    di.override(freelensK8sProxyManagerInjectable, () => ({
+      getApiTarget: vi.fn(),
+      ensureFreelensK8sProxyUrl: vi.fn(async () => "https://127.0.0.1:9443/proxy-prefix"),
+      restart: vi.fn(),
+      ensureRunning: vi.fn(),
+      stop: vi.fn(),
+    }));
+    di.override(freelensK8sProxyCertificateInjectable, () =>
+      Promise.resolve({
+        cert: "some-cert",
+        private: "some-key",
+        public: "some-public-key",
+      }),
+    );
+
+    connectMock.mockImplementation(mockConnectImplementation(proxySocket));
+
+    const handleUpgrade = di.inject(kubeApiUpgradeRequestInjectable);
+
+    await handleUpgrade({
+      cluster,
+      head: Buffer.alloc(0),
+      req: {
+        httpVersion: "1.1",
+        method: "POST",
+        rawHeaders: [],
+        url: `${apiKubePrefix}/api/v1/namespaces/default/pods/demo/exec?command=tar`,
+      } as never,
+      socket: socket as never,
+    });
+
+    proxySocket.emit("secureConnect");
+    proxySocket.write.mockClear();
+    proxySocket.write.mockReturnValueOnce(false);
+
+    socket.emit("data", Buffer.from("payload"));
+
+    expect(proxySocket.write).toHaveBeenCalledWith(Buffer.from("payload"));
+    expect(socket.pause).toHaveBeenCalledTimes(1);
+
+    proxySocket.emit("drain");
+
+    expect(socket.resume).toHaveBeenCalledTimes(1);
+  });
+
+  it("applies backpressure from the client socket to the freelens-k8s-proxy socket", async () => {
+    const di = getDiForUnitTesting();
+    const connectMock = connect as MockedFunction<typeof connect>;
+    const proxySocket = new MockSocket();
+    const socket = new MockSocket();
+    const cluster = new Cluster({
+      contextName: "kind-kind",
+      id: "cluster-id",
+      kubeConfigPath: "/some-kube-config-path",
+    });
+
+    di.override(clusterApiUrlInjectable, () => async () => new URL("https://cluster.example.test"));
+    di.override(freelensK8sProxyManagerInjectable, () => ({
+      getApiTarget: vi.fn(),
+      ensureFreelensK8sProxyUrl: vi.fn(async () => "https://127.0.0.1:9443/proxy-prefix"),
+      restart: vi.fn(),
+      ensureRunning: vi.fn(),
+      stop: vi.fn(),
+    }));
+    di.override(freelensK8sProxyCertificateInjectable, () =>
+      Promise.resolve({
+        cert: "some-cert",
+        private: "some-key",
+        public: "some-public-key",
+      }),
+    );
+
+    connectMock.mockImplementation(mockConnectImplementation(proxySocket));
+
+    const handleUpgrade = di.inject(kubeApiUpgradeRequestInjectable);
+
+    await handleUpgrade({
+      cluster,
+      head: Buffer.alloc(0),
+      req: {
+        httpVersion: "1.1",
+        method: "POST",
+        rawHeaders: [],
+        url: `${apiKubePrefix}/api/v1/namespaces/default/pods/demo/exec?command=tar`,
+      } as never,
+      socket: socket as never,
+    });
+
+    proxySocket.emit("secureConnect");
+    socket.write.mockClear();
+    socket.write.mockReturnValueOnce(false);
+
+    proxySocket.emit("data", Buffer.from("payload-from-proxy"));
+
+    expect(socket.write).toHaveBeenCalledWith(Buffer.from("payload-from-proxy"));
+    expect(proxySocket.pause).toHaveBeenCalledTimes(1);
+
+    socket.emit("drain");
+
+    expect(proxySocket.resume).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns an http error before the upgraded stream starts", async () => {
+    const di = getDiForUnitTesting();
+    const connectMock = connect as MockedFunction<typeof connect>;
+    const proxySocket = new MockSocket();
+    const socket = new MockSocket();
+    const cluster = new Cluster({
+      contextName: "kind-kind",
+      id: "cluster-id",
+      kubeConfigPath: "/some-kube-config-path",
+    });
+
+    di.override(clusterApiUrlInjectable, () => async () => new URL("https://cluster.example.test"));
+    di.override(freelensK8sProxyManagerInjectable, () => ({
+      getApiTarget: vi.fn(),
+      ensureFreelensK8sProxyUrl: vi.fn(async () => "https://127.0.0.1:9443/proxy-prefix"),
+      restart: vi.fn(),
+      ensureRunning: vi.fn(),
+      stop: vi.fn(),
+    }));
+    di.override(freelensK8sProxyCertificateInjectable, () =>
+      Promise.resolve({
+        cert: "some-cert",
+        private: "some-key",
+        public: "some-public-key",
+      }),
+    );
+
+    connectMock.mockImplementation(mockConnectImplementation(proxySocket));
+
+    const handleUpgrade = di.inject(kubeApiUpgradeRequestInjectable);
+
+    await handleUpgrade({
+      cluster,
+      head: Buffer.alloc(0),
+      req: {
+        httpVersion: "1.1",
+        method: "GET",
+        rawHeaders: [],
+        url: `${apiKubePrefix}/api/v1/namespaces/default/pods/demo/exec?command=tar`,
+      } as never,
+      socket: socket as never,
+    });
+
+    proxySocket.emit("error", new Error("boom"));
+
+    expect(socket.write).toHaveBeenCalledWith("HTTP/1.1 500 Connection error\r\n\r\n");
+    expect(socket.end).toHaveBeenCalledTimes(1);
+  });
+});

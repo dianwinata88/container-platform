@@ -1,0 +1,223 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import { applicationInformationToken } from "@freelensapp/application";
+import { loggerInjectionToken } from "@freelensapp/logger";
+import { getInjectable } from "@ogre-tools/injectable";
+import { BrowserWindow } from "electron";
+import pathExistsSyncInjectable from "../../../../common/fs/path-exists-sync.injectable";
+import getAbsolutePathInjectable from "../../../../common/path/get-absolute-path.injectable";
+import openLinkInBrowserInjectable from "../../../../common/utils/open-link-in-browser.injectable";
+import isLinuxInjectable from "../../../../common/vars/is-linux.injectable";
+import lensResourcesDirInjectable from "../../../../common/vars/lens-resources-dir.injectable";
+import manageZoomOfWebContentsInjectable from "../../../../features/zoom/main/manage-zoom-of-web-contents.injectable";
+import applicationWindowStateInjectable from "./application-window-state.injectable";
+import { logFailedLoad } from "./log-failed-load";
+import sessionCertificateVerifierInjectable from "./session-certificate-verifier.injectable";
+import setFreelensProxyTokenCookieInjectable from "./set-freelens-proxy-token-cookie.injectable";
+
+import type { RequireExactlyOne } from "@freelensapp/type-fest";
+
+import type { ElectronWindow } from "./create-lens-window.injectable";
+
+export type ElectronWindowTitleBarStyle = "hiddenInset" | "hidden" | "default" | "customButtonsOnHover";
+
+export interface FileSource {
+  file: string;
+}
+export interface UrlSource {
+  url: string;
+}
+export type ContentSource = RequireExactlyOne<FileSource & UrlSource>;
+
+export interface ElectronWindowConfiguration {
+  id: string;
+  title: string;
+  defaultHeight: number;
+  defaultWidth: number;
+  getContentSource: () => ContentSource;
+  resizable: boolean;
+  windowFrameUtilitiesAreShown: boolean;
+  centered: boolean;
+  titleBarStyle?: ElectronWindowTitleBarStyle;
+  beforeOpen?: () => Promise<void>;
+  onClose: () => void;
+  onFocus?: () => void;
+  onBlur?: () => void;
+  onDomReady?: () => void;
+}
+
+export type CreateElectronWindow = (config: ElectronWindowConfiguration) => ElectronWindow;
+
+const createElectronWindowInjectable = getInjectable({
+  id: "create-electron-window",
+
+  instantiate: (di): CreateElectronWindow => {
+    const logger = di.inject(loggerInjectionToken);
+    const openLinkInBrowser = di.inject(openLinkInBrowserInjectable);
+    const getAbsolutePath = di.inject(getAbsolutePathInjectable);
+    const lensResourcesDir = di.inject(lensResourcesDirInjectable);
+    const isLinux = di.inject(isLinuxInjectable);
+    const applicationInformation = di.inject(applicationInformationToken);
+    const pathExistsSync = di.inject(pathExistsSyncInjectable);
+    const sessionCertificateVerifier = di.inject(sessionCertificateVerifierInjectable);
+    const setFreelensProxyTokenCookie = di.inject(setFreelensProxyTokenCookieInjectable);
+    const manageZoomOfWebContents = di.inject(manageZoomOfWebContentsInjectable);
+
+    return (configuration) => {
+      const applicationWindowState = di.inject(applicationWindowStateInjectable, {
+        id: configuration.id,
+        defaultHeight: configuration.defaultHeight,
+        defaultWidth: configuration.defaultWidth,
+      });
+
+      const { width, height, x, y } = applicationWindowState;
+
+      const browserWindow = new BrowserWindow({
+        x,
+        y,
+        width,
+        height,
+        title: configuration.title,
+        resizable: configuration.resizable,
+        center: configuration.centered,
+        frame: configuration.windowFrameUtilitiesAreShown,
+        show: false,
+        minWidth: 700, // accommodate 800 x 600 display minimum
+        minHeight: 500, // accommodate 800 x 600 display minimum
+        titleBarStyle: configuration.titleBarStyle,
+        backgroundColor: "#1e2124",
+        webPreferences: {
+          nodeIntegration: true,
+          nodeIntegrationInSubFrames: true,
+          contextIsolation: false,
+        },
+      });
+
+      if (isLinux) {
+        const iconFileName = [
+          getAbsolutePath(lensResourcesDir, `../${applicationInformation.name}.png`),
+          `/usr/share/icons/hicolor/512x512/apps/${applicationInformation.name}.png`,
+        ].find(pathExistsSync);
+
+        if (iconFileName != null) {
+          try {
+            browserWindow.setIcon(iconFileName);
+          } catch (err) {
+            logger.warn(`Error while setting window icon ${err}`);
+          }
+        } else {
+          logger.warn(`No suitable icon found for task bar.`);
+        }
+      }
+
+      applicationWindowState.manage(browserWindow);
+
+      browserWindow.webContents.session.setCertificateVerifyProc(sessionCertificateVerifier);
+
+      const stopManagingZoom = manageZoomOfWebContents(browserWindow.webContents);
+
+      browserWindow
+        .on("focus", () => {
+          configuration.onFocus?.();
+        })
+        .on("blur", () => {
+          configuration.onBlur?.();
+        })
+        .on("closed", () => {
+          stopManagingZoom();
+          configuration.onClose();
+          applicationWindowState.unmanage();
+        })
+        .webContents.on("dom-ready", () => {
+          configuration.onDomReady?.();
+        })
+        .on("did-fail-load", (_event, code, desc, url, isMainFrame) => {
+          logFailedLoad(logger, configuration.id, { code, desc, url, isMainFrame });
+        })
+        .on("did-finish-load", () => {
+          logger.info(`[CREATE-ELECTRON-WINDOW]: Window "${configuration.id}" loaded`);
+        })
+        .setWindowOpenHandler((details) => {
+          if (!details.url.includes(".renderer.freelens.app:")) {
+            openLinkInBrowser(details.url).catch((error) => {
+              logger.error("[CREATE-ELECTRON-WINDOW]: failed to open browser", {
+                error,
+              });
+            });
+          }
+
+          return { action: "deny" };
+        });
+
+      return {
+        loadFile: async (filePath) => {
+          logger.info(
+            `[CREATE-ELECTRON-WINDOW]: Loading content for window "${configuration.id}" from file: ${filePath}...`,
+          );
+
+          await browserWindow.loadFile(filePath);
+        },
+
+        loadUrl: async (url) => {
+          logger.info(`[CREATE-ELECTRON-WINDOW]: Loading content for window "${configuration.id}" from url: ${url}...`);
+
+          // Before the window makes its first request to freelens-proxy, so the
+          // root frame and the cluster frames carry the token.
+          await setFreelensProxyTokenCookie(browserWindow.webContents.session);
+
+          // Retry logic for handling firewall/proxy delays and connection issues
+          const maxAttempts = 3;
+          const retryDelayMs = 1000;
+
+          for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+              await browserWindow.loadURL(url);
+              return; // Success
+            } catch (error: any) {
+              const isRetriableError =
+                error.code === "ERR_EMPTY_RESPONSE" ||
+                error.code === "ERR_TUNNEL_CONNECTION_FAILED" ||
+                error.errno === -324 ||
+                error.errno === -111;
+              const isLastAttempt = attempt === maxAttempts;
+
+              if (isRetriableError && !isLastAttempt) {
+                logger.warn(
+                  `[CREATE-ELECTRON-WINDOW]: Failed to load "${configuration.id}" (attempt ${attempt}/${maxAttempts}): ${error.message} (${error.code || error.errno}). Retrying in ${retryDelayMs}ms...`,
+                );
+                await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+              } else {
+                throw error; // Re-throw if it's not a retriable error or it's the last attempt
+              }
+            }
+          }
+        },
+
+        show: () => browserWindow.show(),
+        close: () => browserWindow.close(),
+        send: ({ channel, data, frameInfo }) => {
+          if (frameInfo) {
+            browserWindow.webContents.sendToFrame([frameInfo.processId, frameInfo.frameId], channel, data);
+          } else {
+            browserWindow.webContents.send(channel, data);
+          }
+        },
+
+        reload: () => {
+          const wc = browserWindow.webContents;
+
+          wc.reload();
+          wc.navigationHistory.clear();
+        },
+      };
+    };
+  },
+
+  causesSideEffects: true,
+});
+
+export default createElectronWindowInjectable;

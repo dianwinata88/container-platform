@@ -1,0 +1,237 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import { disposer, getOrInsert, isAbortError, noop, WrappedAbortController } from "@freelensapp/utilities";
+import { once } from "es-toolkit";
+import { compareShallow, reaction } from "mobx";
+
+import type { Logger } from "@freelensapp/logger";
+import type { Disposer } from "@freelensapp/utilities";
+
+import type {
+  KubeObjectStoreLoadAllParams,
+  KubeObjectStoreSubscribeParams,
+} from "../../common/k8s-api/kube-object.store";
+import type { ClusterContext } from "../cluster-frame-context/cluster-frame-context";
+
+// Kubernetes watch-api client
+// API: https://developer.mozilla.org/en-US/docs/Web/API/Streams_API/Using_readable_streams
+
+interface SubscribeStoreParams {
+  store: SubscribableStore;
+  parent: AbortController;
+  namespaces: string[] | undefined;
+  onLoadFailure?: (err: any) => void;
+}
+
+interface WatchStoreParams {
+  store: SubscribableStore;
+  parent?: AbortController;
+  namespaces?: string[];
+  onLoadFailure?: (err: any) => void;
+}
+
+interface WatchCountDependencies {
+  readonly logger: Logger;
+}
+
+class WatchCount {
+  readonly #data = new Map<SubscribableStore, number>();
+
+  constructor(private readonly dependencies: WatchCountDependencies) {}
+
+  public inc(store: SubscribableStore): number {
+    const newCount = getOrInsert(this.#data, store, 0) + 1;
+
+    this.dependencies.logger.debug(`[KUBE-WATCH-API]: inc() count for ${store.api.apiBase} is now ${newCount}`);
+    this.#data.set(store, newCount);
+
+    return newCount;
+  }
+
+  public dec(store: SubscribableStore): number {
+    const oldCount = this.#data.get(store);
+
+    if (oldCount === undefined) {
+      throw new Error(`Cannot dec count for store that has never been inc: ${store.api.kind}`);
+    }
+
+    const newCount = oldCount - 1;
+
+    if (newCount < 0) {
+      throw new Error(`Cannot dec count more times than it has been inc: ${store.api.kind}`);
+    }
+
+    this.dependencies.logger.debug(`[KUBE-WATCH-API]: dec() count for ${store.api.apiBase} is now ${newCount}`);
+    this.#data.set(store, newCount);
+
+    return newCount;
+  }
+}
+
+export interface KubeWatchSubscribeStoreOptions {
+  /**
+   * The namespaces to watch
+   * @default all selected namespaces
+   */
+  namespaces?: string[];
+
+  /**
+   * A function that is called when listing fails. If set then blocks errors
+   * from rejecting promises
+   */
+  onLoadFailure?: (err: any) => void;
+}
+
+interface Dependencies {
+  readonly clusterContext: ClusterContext;
+  readonly logger: Logger;
+}
+
+export interface SubscribableStore {
+  readonly api: {
+    readonly isNamespaced: boolean;
+    readonly apiBase: string;
+    readonly kind: string;
+    readonly apiVersionWithGroup?: string;
+  };
+  loadAll(opts?: KubeObjectStoreLoadAllParams): Promise<unknown>;
+  subscribe(opts?: KubeObjectStoreSubscribeParams): Disposer;
+}
+
+export type SubscribeStores = (stores: SubscribableStore[], opts?: KubeWatchSubscribeStoreOptions) => Disposer;
+
+export class KubeWatchApi {
+  readonly #watch: WatchCount;
+  readonly #sharedWatches = new Map<SubscribableStore, Disposer>();
+
+  constructor(private readonly dependencies: Dependencies) {
+    this.#watch = new WatchCount(this.dependencies);
+  }
+
+  private subscribeStore({ store, parent, namespaces, onLoadFailure }: SubscribeStoreParams): Disposer {
+    if (namespaces) {
+      // A watch of the given namespaces belongs to this subscription alone
+      return this.watchStore({ store, parent, namespaces, onLoadFailure });
+    }
+
+    // A watch of the selected namespaces is shared by every subscription of
+    // the store. The first one starts it, and the last one to be disposed,
+    // whichever that is, ends it; no subscription's own controller may.
+    if (this.#watch.inc(store) === 1) {
+      this.#sharedWatches.set(store, this.watchStore({ store, onLoadFailure }));
+    }
+
+    return () => {
+      if (this.#watch.dec(store) === 0) {
+        this.#sharedWatches.get(store)?.();
+        this.#sharedWatches.delete(store);
+      }
+    };
+  }
+
+  /**
+   * Loads the store and then watches it, for the given namespaces or, when
+   * there are none, for the selected ones, following the selection.
+   */
+  private watchStore({ store, parent, namespaces, onLoadFailure }: WatchStoreParams): Disposer {
+    const followsSelection = !namespaces;
+    let childController = new WrappedAbortController(parent);
+    const unsubscribe = disposer();
+
+    const loadThenSubscribe = async (namespaces: string[] | undefined, controller: AbortController) => {
+      try {
+        await store.loadAll({ namespaces, reqInit: { signal: controller.signal }, onLoadFailure });
+
+        // An aborted load resolves too: the subscription has been disposed,
+        // or the namespaces changed and a newer load has taken over. Neither
+        // wants a watch from this one.
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        unsubscribe.push(store.subscribe({ onLoadFailure, abortController: controller }));
+      } catch (error) {
+        if (!isAbortError(error)) {
+          this.log(new Error("Loading stores has failed", { cause: error }), {
+            meta: { store, namespaces },
+          });
+        }
+      }
+    };
+
+    /**
+     * We don't want to wait because we want to start reacting to namespace
+     * selection changes ASAP
+     */
+    loadThenSubscribe(namespaces ?? this.dependencies.clusterContext.contextNamespaces, childController).catch(noop);
+
+    const cancelReloading =
+      followsSelection && store.api.isNamespaced
+        ? reaction(
+            // Note: must slice because reaction won't fire if it isn't there
+            () =>
+              [
+                this.dependencies.clusterContext.contextNamespaces.slice(),
+                this.dependencies.clusterContext.hasSelectedAll,
+              ] as const,
+            ([namespaces, curSelectedAll], [prevNamespaces, prevSelectedAll]) => {
+              if (curSelectedAll && prevSelectedAll) {
+                const action = namespaces.length > prevNamespaces.length ? "created" : "deleted";
+
+                return console.debug(
+                  `[KUBE-WATCH-API]: Not changing watch for ${store.api.apiBase} because a new namespace was ${action} but all namespaces are selected`,
+                );
+              }
+
+              console.log(`[KUBE-WATCH-API]: changing watch ${store.api.apiBase}`, namespaces);
+              childController.abort();
+              unsubscribe();
+              childController = new WrappedAbortController(parent);
+              loadThenSubscribe(namespaces, childController).catch(noop);
+            },
+            {
+              equals: compareShallow,
+            },
+          )
+        : noop; // don't watch namespaces if namespaces were provided
+
+    return () => {
+      cancelReloading();
+      childController.abort();
+      unsubscribe();
+    };
+  }
+
+  subscribeStores: SubscribeStores = (stores, { namespaces, onLoadFailure } = {}) => {
+    const parent = new AbortController();
+    const unsubscribe = disposer(
+      ...stores.map((store) =>
+        this.subscribeStore({
+          store,
+          parent,
+          namespaces,
+          onLoadFailure,
+        }),
+      ),
+    );
+
+    // unsubscribe
+    return once(() => {
+      parent.abort();
+      unsubscribe();
+    });
+  };
+
+  protected log(message: any, meta: any) {
+    const log = message instanceof Error ? this.dependencies.logger.error : this.dependencies.logger.debug;
+
+    log("[KUBE-WATCH-API]:", message, {
+      time: new Date().toLocaleString(),
+      ...meta,
+    });
+  }
+}

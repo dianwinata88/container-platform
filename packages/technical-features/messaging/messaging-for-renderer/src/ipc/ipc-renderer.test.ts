@@ -1,0 +1,30 @@
+import { registerFeature } from "@freelensapp/feature-core";
+import { createContainer, DiContainer } from "@ogre-tools/injectable";
+import { ipcRenderer } from "electron";
+import { beforeEach, describe, expect, it } from "vitest";
+import { messagingFeatureForRenderer } from "../feature";
+import ipcRendererInjectable from "./ipc-renderer.injectable";
+
+describe("ipc-renderer", () => {
+  let di: DiContainer;
+
+  beforeEach(() => {
+    di = createContainer("irrelevant");
+    // ogre 23 prevents side-effect injectables by default; this test injects real ones.
+    di.permitSideEffects();
+
+    registerFeature(di, messagingFeatureForRenderer);
+  });
+
+  it("is not undefined", () => {
+    const actual = di.inject(ipcRendererInjectable);
+
+    expect(actual).not.toBeUndefined();
+  });
+
+  it("is IPC-renderer of Electron", () => {
+    const actual = di.inject(ipcRendererInjectable);
+
+    expect(actual).toBe(ipcRenderer);
+  });
+});

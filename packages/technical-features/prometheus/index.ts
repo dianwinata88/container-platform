@@ -1,0 +1,9 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+export { prometheusFeature } from "./src/feature";
+export * from "./src/gke-frontend";
+export * from "./src/provider";

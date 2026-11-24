@@ -1,0 +1,48 @@
+{
+  "name": "@freelensapp/generate-tray-icons",
+  "version": "2.1.1-0",
+  "private": true,
+  "description": "CLI generating tray icons for building a lens-like application",
+  "homepage": "https://freelens.app",
+  "bugs": {
+    "url": "https://github.com/freelensapp/freelens/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/freelensapp/freelens.git"
+  },
+  "license": "MIT",
+  "author": {
+    "name": "Freelens Authors",
+    "email": "freelens@freelens.app"
+  },
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "generate-tray-icons": "bin/generate-tray-icons.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc --pretty --project .",
+    "build:dev": "tsc --pretty --project .",
+    "clean:dist": "pnpm dlx rimraf@6.1.4 dist",
+    "start": "node ./dist/index.js"
+  },
+  "dependencies": {
+    "arg": "catalog:",
+    "jsdom": "catalog:",
+    "sharp": "catalog:"
+  },
+  "devDependencies": {
+    "@freelensapp/icon": "workspace:^",
+    "@types/jsdom": "catalog:",
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

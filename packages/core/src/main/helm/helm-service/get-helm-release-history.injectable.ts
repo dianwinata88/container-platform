@@ -1,0 +1,33 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import { loggerInjectionToken } from "@freelensapp/logger";
+import { getInjectable } from "@ogre-tools/injectable";
+import kubeconfigManagerInjectable from "../../kubeconfig-manager/kubeconfig-manager.injectable";
+import getHelmReleaseHistoryInjectable from "../get-helm-release-history.injectable";
+
+import type { Cluster } from "../../../common/cluster/cluster";
+import type { GetHelmReleaseHistoryData } from "../get-helm-release-history.injectable";
+
+const getClusterHelmReleaseHistoryInjectable = getInjectable({
+  id: "get-cluster-helm-release-history",
+
+  instantiate: (di) => {
+    const logger = di.inject(loggerInjectionToken);
+    const getHelmReleaseHistory = di.inject(getHelmReleaseHistoryInjectable);
+
+    return async (cluster: Cluster, data: GetHelmReleaseHistoryData) => {
+      const proxyKubeconfigManager = di.inject(kubeconfigManagerInjectable, cluster);
+      const proxyKubeconfig = await proxyKubeconfigManager.ensurePaths();
+
+      logger.debug(`[CLUSTER]: Fetch release history for clusterId=${cluster.id}`, data);
+
+      return getHelmReleaseHistory(proxyKubeconfig, data);
+    };
+  },
+});
+
+export default getClusterHelmReleaseHistoryInjectable;

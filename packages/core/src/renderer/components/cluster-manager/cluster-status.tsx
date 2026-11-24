@@ -1,0 +1,186 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import { Button } from "@freelensapp/button";
+import { Icon } from "@freelensapp/icon";
+import { Spinner } from "@freelensapp/spinner";
+import { cssNames, hasTypedProperty, isObject, isString } from "@freelensapp/utilities";
+import { withInjectables } from "@ogre-tools/injectable-react";
+import { computed, observable } from "mobx";
+import { observer } from "mobx-react";
+import React from "react";
+import navigateToEntitySettingsInjectable from "../../../common/front-end-routing/routes/entity-settings/navigate-to-entity-settings.injectable";
+import { ipcRendererOn } from "../../../common/ipc";
+import requestClusterActivationInjectable from "../../../features/cluster/activation/renderer/request-activation.injectable";
+import catalogEntityRegistryInjectable from "../../api/catalog/entity/registry.injectable";
+import styles from "./cluster-status.module.scss";
+
+import type { IClassName } from "@freelensapp/utilities";
+
+import type { Cluster } from "../../../common/cluster/cluster";
+import type { KubeAuthUpdate } from "../../../common/cluster-types";
+import type { NavigateToEntitySettings } from "../../../common/front-end-routing/routes/entity-settings/navigate-to-entity-settings.injectable";
+import type { RequestClusterActivation } from "../../../features/cluster/activation/common/request-token";
+import type { CatalogEntityRegistry } from "../../api/catalog/entity/registry";
+
+export interface ClusterStatusProps {
+  className?: IClassName;
+  cluster: Cluster;
+}
+
+interface Dependencies {
+  navigateToEntitySettings: NavigateToEntitySettings;
+  entityRegistry: CatalogEntityRegistry;
+  requestClusterActivation: RequestClusterActivation;
+}
+
+@observer
+class NonInjectedClusterStatus extends React.Component<ClusterStatusProps & Dependencies> {
+  private readonly disposers: (() => void)[] = [];
+
+  @observable accessor authOutput: KubeAuthUpdate[] = [];
+  @observable accessor isReconnecting = false;
+
+  constructor(props: ClusterStatusProps & Dependencies) {
+    super(props);
+  }
+
+  get cluster(): Cluster {
+    return this.props.cluster;
+  }
+
+  // Plain getter (not @computed): reads this.props, which mobx-react 9 forbids
+  // inside a derivation. Read from render, reactivity is preserved by the
+  // observer render reaction.
+  get entity() {
+    return this.props.entityRegistry.getById(this.cluster.id);
+  }
+
+  @computed get hasErrorsOrWarnings(): boolean {
+    return this.authOutput.some(({ level }) => level !== "info");
+  }
+
+  componentDidMount() {
+    this.disposers.push(
+      ipcRendererOn(`cluster:${this.cluster.id}:connection-update`, (evt, res: unknown) => {
+        if (
+          isObject(res) &&
+          hasTypedProperty(res, "message", isString) &&
+          hasTypedProperty(res, "level", function (val): val is KubeAuthUpdate["level"] {
+            return ["info", "warning", "error"].includes(val as string);
+          })
+        ) {
+          this.authOutput.push(res);
+        } else {
+          console.warn(`Got invalid connection update for ${this.cluster.id}`, { update: res });
+        }
+      }),
+    );
+  }
+
+  componentWillUnmount() {
+    this.disposers.forEach((dispose) => dispose());
+  }
+
+  componentDidUpdate(prevProps: Readonly<ClusterStatusProps>): void {
+    if (prevProps.cluster.id !== this.props.cluster.id) {
+      this.isReconnecting = false;
+      this.authOutput = [];
+    }
+  }
+
+  reconnect = async () => {
+    this.authOutput = [];
+    this.isReconnecting = true;
+
+    try {
+      await this.props.requestClusterActivation({
+        clusterId: this.cluster.id,
+        force: true,
+      });
+    } catch (error) {
+      this.authOutput.push({
+        message: String(error),
+        level: "error",
+      });
+    } finally {
+      this.isReconnecting = false;
+    }
+  };
+
+  manageProxySettings = () => {
+    this.props.navigateToEntitySettings(this.cluster.id, "proxy");
+  };
+
+  renderAuthenticationOutput() {
+    return (
+      <pre>
+        {this.authOutput.map(({ message, level }, index) => (
+          <p key={index} className={cssNames({ error: level === "error", warning: level === "warning" })}>
+            {message.trim()}
+          </p>
+        ))}
+      </pre>
+    );
+  }
+
+  renderStatusIcon() {
+    if (this.hasErrorsOrWarnings) {
+      return <Icon material="cloud_off" className={styles.icon} />;
+    }
+
+    return (
+      <>
+        <Spinner singleColor={false} className={styles.spinner} />
+        <pre className="kube-auth-out">
+          <p>
+            {this.isReconnecting ? "Reconnecting" : "Connecting"}
+            &hellip;
+          </p>
+        </pre>
+      </>
+    );
+  }
+
+  renderReconnectionHelp() {
+    if (this.hasErrorsOrWarnings && !this.isReconnecting) {
+      return (
+        <>
+          <Button primary label="Reconnect" className="m-auto" onClick={this.reconnect} waiting={this.isReconnecting} />
+          <a className="m-auto interactive" onClick={this.manageProxySettings}>
+            Manage Proxy Settings
+          </a>
+        </>
+      );
+    }
+
+    return undefined;
+  }
+
+  render() {
+    return (
+      <div
+        className={cssNames(styles.status, "flex flex-col m-auto items-center justify-center", this.props.className)}
+      >
+        <div className="flex flex-col items-center gap-4">
+          <h2>{this.entity?.getName() ?? this.cluster.name.get()}</h2>
+          {this.renderStatusIcon()}
+          {this.renderAuthenticationOutput()}
+          {this.renderReconnectionHelp()}
+        </div>
+      </div>
+    );
+  }
+}
+
+export const ClusterStatus = withInjectables<Dependencies, ClusterStatusProps>(NonInjectedClusterStatus, {
+  getProps: (di, props) => ({
+    ...props,
+    navigateToEntitySettings: di.inject(navigateToEntitySettingsInjectable),
+    entityRegistry: di.inject(catalogEntityRegistryInjectable),
+    requestClusterActivation: di.inject(requestClusterActivationInjectable),
+  }),
+});

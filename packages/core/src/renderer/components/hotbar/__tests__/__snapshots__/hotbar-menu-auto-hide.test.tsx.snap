@@ -1,0 +1,135 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`<HotbarMenu /> auto-hide functionality > when auto-hide is disabled > renders w/o errors 1`] = `
+<div>
+  <div
+    class="HotbarMenu flex flex-col"
+  >
+    <div
+      class="HotbarItems flex flex-col"
+    >
+      <div
+        id="DndDescribedBy-0"
+        style="display: none;"
+      >
+        
+    To pick up a draggable item, press the space bar.
+    While dragging, use the arrow keys to move the item.
+    Press space again to drop the item in its new position, or press escape to cancel.
+  
+      </div>
+      <div
+        aria-atomic="true"
+        aria-live="assertive"
+        id="DndLiveRegion-0"
+        role="status"
+        style="position: fixed; top: 0px; left: 0px; width: 1px; height: 1px; margin: -1px; border: 0px; padding: 0px; overflow: hidden; clip: rect(0px 0px 0px 0px); clip-path: inset(100%); white-space: nowrap;"
+      />
+    </div>
+    <div
+      class="HotbarSelector"
+    >
+      <i
+        class="Icon material interactive focusable"
+        tabindex="0"
+      >
+        <span
+          class="icon"
+          data-icon-name="arrow_left"
+        >
+          arrow_left
+        </span>
+      </i>
+      <div
+        class="HotbarIndex"
+      >
+        <div
+          class="badge Badge small clickable"
+          data-testid="hotbar-menu-badge-for-undefined"
+          id="hotbarIndex"
+        >
+          ??
+        </div>
+      </div>
+      <i
+        class="Icon material interactive focusable"
+        tabindex="0"
+      >
+        <span
+          class="icon"
+          data-icon-name="arrow_right"
+        >
+          arrow_right
+        </span>
+      </i>
+    </div>
+  </div>
+</div>
+`;
+
+exports[`<HotbarMenu /> auto-hide functionality > when auto-hide is enabled > renders w/o errors 1`] = `
+<div>
+  <div
+    class="HotbarMenu flex flex-col autoHide"
+  >
+    <div
+      class="HotbarItems flex flex-col"
+    >
+      <div
+        id="DndDescribedBy-3"
+        style="display: none;"
+      >
+        
+    To pick up a draggable item, press the space bar.
+    While dragging, use the arrow keys to move the item.
+    Press space again to drop the item in its new position, or press escape to cancel.
+  
+      </div>
+      <div
+        aria-atomic="true"
+        aria-live="assertive"
+        id="DndLiveRegion-3"
+        role="status"
+        style="position: fixed; top: 0px; left: 0px; width: 1px; height: 1px; margin: -1px; border: 0px; padding: 0px; overflow: hidden; clip: rect(0px 0px 0px 0px); clip-path: inset(100%); white-space: nowrap;"
+      />
+    </div>
+    <div
+      class="HotbarSelector"
+    >
+      <i
+        class="Icon material interactive focusable"
+        tabindex="0"
+      >
+        <span
+          class="icon"
+          data-icon-name="arrow_left"
+        >
+          arrow_left
+        </span>
+      </i>
+      <div
+        class="HotbarIndex"
+      >
+        <div
+          class="badge Badge small clickable"
+          data-testid="hotbar-menu-badge-for-undefined"
+          id="hotbarIndex"
+        >
+          ??
+        </div>
+      </div>
+      <i
+        class="Icon material interactive focusable"
+        tabindex="0"
+      >
+        <span
+          class="icon"
+          data-icon-name="arrow_right"
+        >
+          arrow_right
+        </span>
+      </i>
+    </div>
+  </div>
+</div>
+`;

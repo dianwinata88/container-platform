@@ -1,0 +1,49 @@
+{
+  "name": "@freelensapp/kube-api",
+  "version": "2.1.1-0",
+  "private": true,
+  "description": "Kube api",
+  "homepage": "https://freelens.app",
+  "bugs": {
+    "url": "https://github.com/freelensapp/freelens/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/freelensapp/freelens.git"
+  },
+  "license": "MIT",
+  "type": "module",
+  "author": {
+    "name": "Freelens Authors",
+    "email": "freelens@freelens.app"
+  },
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "scripts": {
+    "clean:dist": "pnpm dlx rimraf@6.1.4 dist",
+    "test:unit": "vitest run -c ../../../vitest.config.ts --project @freelensapp/kube-api"
+  },
+  "dependencies": {
+    "@freelensapp/json-api": "workspace:^",
+    "@freelensapp/kube-object": "workspace:^",
+    "@freelensapp/type-fest": "workspace:^",
+    "@freelensapp/utilities": "workspace:^",
+    "@ogre-tools/fp": "catalog:",
+    "@ogre-tools/injectable": "catalog:",
+    "es-toolkit": "catalog:",
+    "mobx": "catalog:"
+  },
+  "devDependencies": {
+    "@async-fn/vitest": "catalog:",
+    "@freelensapp/logger": "workspace:^",
+    "@freelensapp/test-utils": "workspace:^",
+    "@freelensapp/typescript": "workspace:^",
+    "rfc6902": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

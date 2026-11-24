@@ -1,0 +1,38 @@
+{
+  "name": "@freelensapp/kube-api-specifics",
+  "version": "2.1.1-0",
+  "private": true,
+  "description": "Kube api",
+  "homepage": "https://freelens.app",
+  "bugs": {
+    "url": "https://github.com/freelensapp/freelens/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/freelensapp/freelens.git"
+  },
+  "license": "MIT",
+  "type": "module",
+  "author": {
+    "name": "Freelens Authors",
+    "email": "freelens@freelens.app"
+  },
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "scripts": {
+    "clean:dist": "pnpm dlx rimraf@6.1.4 dist"
+  },
+  "dependencies": {
+    "@freelensapp/feature-core": "workspace:^",
+    "@freelensapp/kube-api": "workspace:^",
+    "@freelensapp/logger": "workspace:^",
+    "@ogre-tools/injectable": "catalog:"
+  },
+  "devDependencies": {
+    "@freelensapp/typescript": "workspace:^"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

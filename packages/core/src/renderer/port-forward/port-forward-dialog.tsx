@@ -1,0 +1,220 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import "./port-forward-dialog.scss";
+
+import { Icon } from "@freelensapp/icon";
+import { loggerInjectionToken } from "@freelensapp/logger";
+import { cssNames } from "@freelensapp/utilities";
+import { withInjectables } from "@ogre-tools/injectable-react";
+import { observable } from "mobx";
+import { observer } from "mobx-react";
+import { Component } from "react";
+import { Checkbox } from "../components/checkbox";
+import { Dialog } from "../components/dialog";
+import { Input } from "../components/input";
+import { Wizard, WizardStep } from "../components/wizard";
+import aboutPortForwardingInjectable from "./about-port-forwarding.injectable";
+import notifyErrorPortForwardingInjectable from "./notify-error-port-forwarding.injectable";
+import openPortForwardInjectable from "./open-port-forward.injectable";
+import portForwardDialogModelInjectable from "./port-forward-dialog-model/port-forward-dialog-model.injectable";
+import portForwardStoreInjectable from "./port-forward-store/port-forward-store.injectable";
+
+import type { Logger } from "@freelensapp/logger";
+
+import type { DialogProps } from "../components/dialog";
+import type { OpenPortForward } from "./open-port-forward.injectable";
+import type {
+  PortForwardDialogData,
+  PortForwardDialogModel,
+} from "./port-forward-dialog-model/port-forward-dialog-model";
+import type { PortForwardStore } from "./port-forward-store/port-forward-store";
+
+export interface PortForwardDialogProps extends Partial<DialogProps> {}
+
+interface Dependencies {
+  portForwardStore: PortForwardStore;
+  model: PortForwardDialogModel;
+  logger: Logger;
+  aboutPortForwarding: () => void;
+  notifyErrorPortForwarding: (message: string) => void;
+  openPortForward: OpenPortForward;
+}
+
+@observer
+class NonInjectedPortForwardDialog extends Component<PortForwardDialogProps & Dependencies> {
+  @observable accessor currentPort = 0;
+  @observable accessor desiredPort = 0;
+  @observable accessor desiredAddress = "localhost";
+
+  constructor(props: PortForwardDialogProps & Dependencies) {
+    super(props);
+  }
+
+  get portForwardStore() {
+    return this.props.portForwardStore;
+  }
+
+  onOpen = async (data: PortForwardDialogData) => {
+    this.currentPort = +data.portForward.forwardPort;
+    this.desiredPort = this.currentPort;
+    this.desiredAddress = data.portForward.address ?? "localhost";
+  };
+
+  changePort = (value: string) => {
+    this.desiredPort = Number(value);
+  };
+
+  changeAddress = (value: string) => {
+    this.desiredAddress = value;
+  };
+
+  startPortForward = async (data: PortForwardDialogData) => {
+    let { portForward } = data;
+    const { currentPort, desiredPort } = this;
+
+    portForward.address = this.desiredAddress;
+
+    try {
+      // determine how many port-forwards already exist
+      const { length } = this.portForwardStore.getPortForwards();
+
+      portForward.protocol = data.useHttps ? "https" : "http";
+
+      if (currentPort) {
+        const wasRunning = portForward.status === "Active";
+
+        portForward = await this.portForwardStore.modify(portForward, desiredPort);
+
+        if (wasRunning && portForward.status === "Disabled") {
+          this.props.notifyErrorPortForwarding(
+            `Error occurred starting port-forward, the local port ${portForward.forwardPort} may not be available or the ${portForward.kind} ${portForward.name} may not be reachable`,
+          );
+        }
+      } else {
+        portForward.forwardPort = desiredPort;
+        portForward = await this.portForwardStore.add(portForward);
+
+        if (portForward.status === "Disabled") {
+          this.props.notifyErrorPortForwarding(
+            `Error occurred starting port-forward, the local port ${portForward.forwardPort} may not be available or the ${portForward.kind} ${portForward.name} may not be reachable`,
+          );
+        } else {
+          // if this is the first port-forward show the about notification
+          if (!length) {
+            this.props.aboutPortForwarding();
+          }
+        }
+      }
+
+      if (portForward.status === "Active" && data.openInBrowser) {
+        this.props.openPortForward(portForward);
+      }
+    } catch (error) {
+      this.props.logger.error(`[PORT-FORWARD-DIALOG]: ${error}`, portForward);
+    } finally {
+      this.props.model.close();
+    }
+  };
+
+  renderContents(data: PortForwardDialogData) {
+    return (
+      <Wizard
+        header={
+          <h5>
+            {"Port Forwarding for "}
+            <span>{data.portForward.name}</span>
+          </h5>
+        }
+        done={this.props.model.close}
+      >
+        <WizardStep
+          contentClass="flex gap-2 flex-col"
+          next={() => this.startPortForward(data)}
+          nextLabel={this.currentPort === 0 ? "Start" : "Modify"}
+        >
+          <div className="flex flex-col gap-2">
+            <div className="input-container flex items-center">
+              <div className="current-address" data-testid="current-address">
+                Addresses to listen on (comma separated):
+              </div>
+              <Icon
+                material="info"
+                tooltip="Only accepts IP addresses or localhost as a value. When localhost is
+	supplied, kubectl will try to bind on both 127.0.0.1 and ::1 and will fail if neither of these addresses are
+	available to bind."
+              />
+              <Input
+                className="portInput"
+                placeholder="localhost"
+                value={this.desiredAddress}
+                onChange={this.changeAddress}
+              />
+            </div>
+            <div className="input-container flex items-center">
+              <div className="current-port" data-testid="current-port">
+                Local port to forward from:
+              </div>
+              <Input
+                className="portInput"
+                type="number"
+                min="0"
+                max="65535"
+                value={this.desiredPort === 0 ? "" : String(this.desiredPort)}
+                placeholder={"Random"}
+                onChange={this.changePort}
+                autoFocus
+              />
+            </div>
+            <Checkbox
+              data-testid="port-forward-https"
+              label="https"
+              value={data.useHttps}
+              onChange={(value) => (data.useHttps = value)}
+            />
+            <Checkbox
+              data-testid="port-forward-open"
+              label="Open in Browser"
+              value={data.openInBrowser}
+              onChange={(value) => (data.openInBrowser = value)}
+            />
+          </div>
+        </WizardStep>
+      </Wizard>
+    );
+  }
+
+  render() {
+    const { className, portForwardStore, model, ...dialogProps } = this.props;
+    const data = model.data.get();
+    const isOpen = Boolean(data);
+
+    return (
+      <Dialog
+        {...dialogProps}
+        isOpen={isOpen}
+        className={cssNames("PortForwardDialog", className)}
+        onOpen={data && (() => this.onOpen(data))}
+        onClose={data?.onClose}
+        close={this.props.model.close}
+      >
+        {data && this.renderContents(data)}
+      </Dialog>
+    );
+  }
+}
+
+export const PortForwardDialog = withInjectables<Dependencies, PortForwardDialogProps>(NonInjectedPortForwardDialog, {
+  getProps: (di, props) => ({
+    ...props,
+    portForwardStore: di.inject(portForwardStoreInjectable),
+    model: di.inject(portForwardDialogModelInjectable),
+    aboutPortForwarding: di.inject(aboutPortForwardingInjectable),
+    notifyErrorPortForwarding: di.inject(notifyErrorPortForwardingInjectable),
+    openPortForward: di.inject(openPortForwardInjectable),
+    logger: di.inject(loggerInjectionToken),
+  }),
+});

@@ -1,0 +1,46 @@
+{
+  "name": "@freelensapp/messaging",
+  "version": "2.1.1-0",
+  "private": true,
+  "description": "An abstraction for messaging between Lens environments",
+  "homepage": "https://freelens.app",
+  "bugs": {
+    "url": "https://github.com/freelensapp/freelens/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/freelensapp/freelens.git"
+  },
+  "license": "MIT",
+  "type": "module",
+  "author": {
+    "name": "Freelens Authors",
+    "email": "freelens@freelens.app"
+  },
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "scripts": {
+    "clean:dist": "pnpm dlx rimraf@6.1.4 dist",
+    "test:unit": "vitest run -c ../../../../vitest.config.ts --project @freelensapp/messaging"
+  },
+  "dependencies": {
+    "@freelensapp/application": "workspace:^",
+    "@freelensapp/feature-core": "workspace:^",
+    "@freelensapp/startable-stoppable": "workspace:^",
+    "@ogre-tools/injectable": "catalog:",
+    "@ogre-tools/injectable-extension-for-mobx": "catalog:",
+    "mobx": "catalog:"
+  },
+  "devDependencies": {
+    "@freelensapp/typescript": "workspace:^",
+    "@freelensapp/utilities": "workspace:^",
+    "es-toolkit": "catalog:",
+    "jsdom": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

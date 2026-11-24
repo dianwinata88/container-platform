@@ -1,0 +1,84 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import { Button } from "@freelensapp/button";
+import { cssNames } from "@freelensapp/utilities";
+import { withInjectables } from "@ogre-tools/injectable-react";
+import { observer } from "mobx-react";
+import React from "react";
+import openPathPickingDialogInjectable from "../../../features/path-picking-dialog/renderer/pick-paths.injectable";
+
+import type { OpenPathPickingDialog } from "../../../features/path-picking-dialog/renderer/pick-paths.injectable";
+
+export interface PathPickFilter {
+  name: string;
+  extensions: string[];
+}
+
+export type PathPickProperty =
+  | "openFile"
+  | "openDirectory"
+  | "multiSelections"
+  | "showHiddenFiles"
+  | "createDirectory"
+  | "promptToCreate"
+  | "noResolveAliases"
+  | "treatPackageAsDirectory"
+  | "dontAddToRecent";
+
+export interface PathPickOpts {
+  message: string;
+  onPick?: (paths: string[]) => void | Promise<void>;
+  onCancel?: () => void | Promise<void>;
+  defaultPath?: string;
+  buttonLabel?: string;
+  filters?: PathPickFilter[];
+  properties?: PathPickProperty[];
+  securityScopedBookmarks?: boolean;
+}
+
+export interface PathPickerProps extends PathPickOpts {
+  className?: string;
+  disabled?: boolean;
+}
+
+interface Dependencies {
+  openPathPickingDialog: OpenPathPickingDialog;
+}
+
+const NonInjectedPathPicker = observer((props: PathPickerProps & Dependencies) => {
+  const { className, disabled, openPathPickingDialog, ...pickOpts } = props;
+  const [isDialogOpen, setIsDialogOpen] = React.useState(false);
+
+  return (
+    <Button
+      primary
+      label={pickOpts.message}
+      disabled={disabled || isDialogOpen}
+      className={cssNames("PathPicker", className)}
+      onClick={async () => {
+        if (isDialogOpen) {
+          return;
+        }
+
+        setIsDialogOpen(true);
+
+        try {
+          await openPathPickingDialog(pickOpts);
+        } finally {
+          setIsDialogOpen(false);
+        }
+      }}
+    />
+  );
+});
+
+export const PathPicker = withInjectables<Dependencies, PathPickerProps>(NonInjectedPathPicker, {
+  getProps: (di, props) => ({
+    ...props,
+    openPathPickingDialog: di.inject(openPathPickingDialogInjectable),
+  }),
+});

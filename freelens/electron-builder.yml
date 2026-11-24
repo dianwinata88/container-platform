@@ -1,0 +1,195 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/electron-userland/electron-builder/refs/heads/master/packages/app-builder-lib/scheme.json
+
+electronVersion: 44.11.5 # datasource=npm depName=electron
+
+## node-pty is our only native module and it is a N-API (node-addon-api)
+## addon, so its bundled prebuilt binaries are ABI-stable and load as-is on
+## every Electron version we ship. No native rebuild is needed at pack time.
+npmRebuild: false
+
+## There is no support in app for autoupdates yet
+detectUpdateChannel: false
+generateUpdatesFilesForAllChannels: true
+publish: []
+
+## Files in app.asar
+files:
+  - static
+  ## Workspace packages are bundled from TypeScript source into
+  ## static/build by electron-vite and never required at runtime
+  - "!node_modules/@freelensapp/**"
+  - "!node_modules/electron"
+  ## Source maps and TS build info are only useful when debugging local builds
+  - "!**/*.map"
+  - "!**/*.tsbuildinfo"
+  ## Monaco is bundled into the renderer by Vite and never required at runtime
+  - "!node_modules/monaco-editor/**"
+  ## node-pty ships vendor-provided prebuilt binaries under prebuilds/ that we
+  ## load as-is (see npmRebuild above). A local build/ directory would only ever
+  ## contain unsigned binaries that some antivirus engines flag as false
+  ## positives (see issue #2021), so exclude it: node-pty's loader then falls
+  ## back to the vendor prebuilds at runtime (lib/utils.js checks build/Release
+  ## first, then prebuilds/<platform>-<arch>).
+  - "!node_modules/node-pty/build"
+  ## Native binaries for other platforms/arches are never loaded at runtime, so
+  ## exclude them at pack time. Doing this here (instead of deleting them from
+  ## app.asar.unpacked afterwards) keeps the app.asar header consistent with the
+  ## files actually present. ${platform} expands to darwin/linux/win32 and ${arch}
+  ## to x64/arm64, matching node-pty's prebuild directory names (e.g. darwin-arm64).
+  ## ${platform} is the platform of the build host (process.platform), not the
+  ## target, so each platform has to be packed on its own OS.
+  - "!node_modules/node-pty/prebuilds/!(${platform}-${arch})"
+  - "!node_modules/node-pty/prebuilds/!(${platform}-${arch})/**"
+  ## On Windows, conpty.node loads the bundled ConPTY (conpty.dll, which starts
+  ## OpenConsole.exe) from conpty/ next to itself, which the globs above keep as
+  ## prebuilds/win32-<arch>/conpty/. third_party/ holds the same files for every
+  ## Windows arch, only for node-pty's install script to copy into a local
+  ## build/, so it is never loaded at runtime.
+  - "!node_modules/node-pty/third_party"
+
+## Notarization
+afterSign: build/notarize.cjs
+
+## Used to register the app as a handler for the freelens:// protocol
+protocols:
+  name: Freelens Protocol Handler
+  schemes:
+    - freelens
+  role: Viewer
+
+## For Linux targets
+linux:
+  appId: app.freelens.Freelens
+  category: Development;Network
+  artifactName: ${productName}-${version}.${arch}.${ext}
+  target:
+    - AppImage
+  extraResources:
+    - from: binaries/client/linux/${arch}/kubectl
+      to: ./${arch}/kubectl
+    - from: binaries/client/linux/${arch}/freelens-k8s-proxy
+      to: ./${arch}/freelens-k8s-proxy
+    - from: binaries/client/linux/${arch}/helm
+      to: ./${arch}/helm
+  publish: null
+
+appImage:
+  executableArgs:
+    - --ozone-platform-hint=auto
+    - --enable-features=WebRTCPipeWireCapturer
+    - --enable-features=WaylandWindowDecorations
+    - --disable-gpu-compositing
+    - --no-sandbox
+  license: static/build/license.txt
+
+deb:
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libuuid1
+    - libsecret-1-0
+    - libasound2
+    - libgbm1
+  executableArgs:
+    - --ozone-platform-hint=auto
+    - --enable-features=WebRTCPipeWireCapturer
+    - --enable-features=WaylandWindowDecorations
+    - --disable-gpu-compositing
+  afterInstall: ./build/after-install-deb.sh
+  afterRemove: ./build/after-remove-deb.sh
+  fpm:
+    - ./build/apparmor-profile.aa=/etc/apparmor.d/freelens
+    - ./build/apt/freelens.asc=/etc/apt/keyrings/freelens.asc
+    - ./build/apt/freelens.sources=/etc/apt/sources.list.d/freelens.sources
+    - ./build/metainfo.xml=/usr/share/metainfo/app.freelens.Freelens.metainfo.xml
+  packageCategory: devel
+
+## Official Flatpak is built from the separate repository
+flatpak:
+  useWaylandFlags: true
+  license: static/build/license.txt
+
+## Official Snap is built from the separate repository
+snap:
+  allowNativeWayland: true
+  confinement: classic
+
+rpm:
+  depends:
+    - gtk3
+    - libnotify
+    - nss
+    - (libXtst or libXtst6)
+    - xdg-utils
+    - at-spi2-core
+    - (libdrm2 or libdrm)
+    - (libgbm1 or mesa-libgbm)
+    - (alsa-lib or libalsa2 or libasound2)
+  executableArgs:
+    - --ozone-platform-hint=auto
+    - --enable-features=WebRTCPipeWireCapturer
+    - --enable-features=WaylandWindowDecorations
+    - --disable-gpu-compositing
+  fpm:
+    - --rpm-rpmbuild-define=_build_id_links none
+    - ./build/metainfo.xml=/usr/share/metainfo/app.freelens.Freelens.metainfo.xml
+  packageCategory: devel
+
+## For macOS targets
+mac:
+  appId: app.freelens.Freelens
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  category: public.app-category.developer-tools
+  darkModeSupport: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  extraResources:
+    - from: binaries/client/darwin/${arch}/kubectl
+      to: ./${arch}/kubectl
+    - from: binaries/client/darwin/${arch}/freelens-k8s-proxy
+      to: ./${arch}/freelens-k8s-proxy
+    - from: binaries/client/darwin/${arch}/helm
+      to: ./${arch}/helm
+  publish: null
+
+dmg:
+  icon: build/installerIcon.icns
+
+pkg:
+  license: static/build/license.txt
+  background:
+    file: build/installerBackground.png
+    alignment: bottomleft
+    scaling: none
+
+## For Windows targets
+win:
+  appId: app.freelens.Freelens
+  target:
+    - nsis
+    - portable
+  extraResources:
+    - from: binaries/client/windows/${arch}/kubectl.exe
+      to: ./${arch}/kubectl.exe
+    - from: binaries/client/windows/${arch}/freelens-k8s-proxy.exe
+      to: ./${arch}/freelens-k8s-proxy.exe
+    - from: binaries/client/windows/${arch}/helm.exe
+      to: ./${arch}/helm.exe
+  publish: null
+
+msi:
+  perMachine: false
+
+nsis:
+  include: build/installer.nsh
+  installerIcon: build/installerIcon.ico
+  oneClick: false
+  allowElevation: true
+  createStartMenuShortcut: true
+  allowToChangeInstallationDirectory: true
+  license: static/build/license.txt

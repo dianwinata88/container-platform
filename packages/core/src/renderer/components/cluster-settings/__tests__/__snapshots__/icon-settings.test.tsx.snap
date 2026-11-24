@@ -1,0 +1,36 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Icon settings > given no registrations for cluster settings component injection token > renders 1`] = `
+<body>
+  <div>
+    <div>
+      <div
+        class="file-loader flex flex-row items-center"
+      >
+        <div
+          class="FilePicker"
+        >
+          <label
+            class="flex gap-2 items-center"
+            for="file-upload"
+          >
+            <div
+              class="Avatar rounded"
+              style="width: 53px; height: 53px; background: rgb(110, 28, 69);"
+            >
+              skc
+            </div>
+             
+          </label>
+          <input
+            accept="image/*"
+            id="file-upload"
+            name="FilePicker"
+            type="file"
+          />
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+`;

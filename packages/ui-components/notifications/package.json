@@ -1,0 +1,55 @@
+{
+  "name": "@freelensapp/notifications",
+  "version": "2.1.1-0",
+  "private": true,
+  "description": "Highly extendable notifications in the Freelens.",
+  "homepage": "https://freelens.app",
+  "bugs": {
+    "url": "https://github.com/freelensapp/freelens/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/freelensapp/freelens.git"
+  },
+  "license": "MIT",
+  "type": "module",
+  "author": {
+    "name": "Freelens Authors",
+    "email": "freelens@freelens.app"
+  },
+  "exports": {
+    ".": "./index.ts",
+    "./styles": "./src/notifications.scss"
+  },
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "scripts": {},
+  "dependencies": {
+    "@freelensapp/animate": "workspace:^",
+    "@freelensapp/feature-core": "workspace:^",
+    "@freelensapp/icon": "workspace:^",
+    "@freelensapp/json-api": "workspace:^",
+    "@freelensapp/logger": "workspace:^",
+    "@freelensapp/react-application": "workspace:^",
+    "@freelensapp/type-fest": "workspace:^",
+    "@freelensapp/utilities": "workspace:^",
+    "@ogre-tools/fp": "catalog:",
+    "@ogre-tools/injectable": "catalog:",
+    "@ogre-tools/injectable-react": "catalog:",
+    "auto-bind": "catalog:",
+    "es-toolkit": "catalog:",
+    "mobx": "catalog:",
+    "mobx-react": "catalog:",
+    "react": "catalog:"
+  },
+  "devDependencies": {
+    "@freelensapp/typescript": "workspace:^",
+    "@types/react": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

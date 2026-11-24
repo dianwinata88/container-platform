@@ -1,0 +1,43 @@
+{
+  "name": "@freelensapp/application",
+  "version": "2.1.1-0",
+  "private": true,
+  "description": "Package for creating Freelens applications",
+  "homepage": "https://freelens.app",
+  "bugs": {
+    "url": "https://github.com/freelensapp/freelens/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/freelensapp/freelens.git"
+  },
+  "license": "MIT",
+  "type": "module",
+  "author": {
+    "name": "Freelens Authors",
+    "email": "freelens@freelens.app"
+  },
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "scripts": {
+    "clean:dist": "pnpm dlx rimraf@6.1.4 dist",
+    "test:unit": "vitest run -c ../../../../vitest.config.ts --project @freelensapp/application"
+  },
+  "dependencies": {
+    "@freelensapp/feature-core": "workspace:^",
+    "@freelensapp/run-many": "workspace:^",
+    "@ogre-tools/fp": "catalog:",
+    "@ogre-tools/injectable": "catalog:"
+  },
+  "devDependencies": {
+    "@async-fn/vitest": "catalog:",
+    "@freelensapp/test-utils": "workspace:^",
+    "@freelensapp/typescript": "workspace:^",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

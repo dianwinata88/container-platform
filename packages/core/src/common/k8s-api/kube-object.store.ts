@@ -1,0 +1,747 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import assert from "node:assert";
+import { parseKubeApi } from "@freelensapp/kube-api";
+import { KubeStatus } from "@freelensapp/kube-object";
+import { isAbortError, noop, object, rejectPromiseBy, waitUntilDefined } from "@freelensapp/utilities";
+import autoBind from "auto-bind";
+import { action, computed, observable, reaction } from "mobx";
+import { ItemStore } from "../item.store";
+
+import type { FetchRequestInit as RequestInit } from "@freelensapp/json-api";
+import type {
+  DeleteOptions,
+  IKubeWatchEvent,
+  KubeApi,
+  KubeApiPatchType,
+  KubeApiQueryParams,
+  KubeApiWatchCallback,
+} from "@freelensapp/kube-api";
+import type { KubeJsonApiDataFor, KubeObject } from "@freelensapp/kube-object";
+import type { Logger } from "@freelensapp/logger";
+import type { PartialDeep } from "@freelensapp/type-fest";
+import type { Disposer } from "@freelensapp/utilities";
+
+import type { Patch } from "rfc6902";
+
+import type { ClusterContext } from "../../renderer/cluster-frame-context/cluster-frame-context";
+import type { WatchReconnect } from "./watch-reconnect";
+
+export type OnLoadFailure = (error: unknown) => void;
+
+export interface KubeObjectStoreLoadingParams {
+  namespaces: string[];
+  reqInit?: RequestInit;
+
+  /**
+   * A function that is called when listing fails. If set then blocks errors
+   * being rejected with
+   */
+  onLoadFailure?: OnLoadFailure;
+}
+
+export interface KubeObjectStoreLoadAllParams {
+  namespaces?: string[];
+  merge?: boolean;
+  reqInit?: RequestInit;
+
+  /**
+   * A function that is called when listing fails. If set then blocks errors
+   * being rejected with
+   */
+  onLoadFailure?: OnLoadFailure;
+}
+
+export interface KubeObjectStoreSubscribeParams {
+  /**
+   * A function that is called when listing fails. If set then blocks errors
+   * being rejected with
+   */
+  onLoadFailure?: OnLoadFailure;
+
+  /**
+   * An optional parent abort controller
+   */
+  abortController?: AbortController;
+}
+
+export interface MergeItemsOptions {
+  merge?: boolean;
+  updateStore?: boolean;
+  sort?: boolean;
+  filter?: boolean;
+  namespaces: string[];
+}
+
+export interface StatusProvider<K> {
+  getStatuses(items: K[]): Record<string, number>;
+}
+
+export interface KubeObjectStoreOptions {
+  limit?: number;
+  bufferSize?: number;
+}
+
+export type KubeApiDataFrom<K extends KubeObject, A> =
+  A extends KubeApi<K, infer D> ? (D extends KubeJsonApiDataFor<K> ? D : never) : never;
+
+export type JsonPatch = Patch;
+
+export interface KubeObjectStoreDependencies {
+  readonly context: ClusterContext;
+  readonly logger: Logger;
+
+  /**
+   * Decides when a failed watch starts again. Without it a failed watch
+   * starts again after 5 seconds.
+   */
+  readonly watchReconnect?: WatchReconnect;
+}
+
+interface ItemLookups<K> {
+  readonly byId: Map<string, K>;
+  readonly byPath: Map<string, K>;
+}
+
+// The first item of each id and of each self link, as a `find` over the items
+// returns it.
+const indexItems = <K extends KubeObject>(items: readonly K[]): ItemLookups<K> => {
+  const lookups: ItemLookups<K> = { byId: new Map(), byPath: new Map() };
+
+  for (const item of items) {
+    const id = item.getId();
+
+    if (!lookups.byId.has(id)) {
+      lookups.byId.set(id, item);
+    }
+
+    if (!lookups.byPath.has(item.selfLink)) {
+      lookups.byPath.set(item.selfLink, item);
+    }
+  }
+
+  return lookups;
+};
+
+export class KubeObjectStore<
+  K extends KubeObject = KubeObject,
+  A extends KubeApi<K, D> = KubeApi<K, KubeJsonApiDataFor<K>>,
+  D extends KubeJsonApiDataFor<K> = KubeApiDataFrom<K, A>,
+> extends ItemStore<K> {
+  public readonly limit: number | undefined;
+  public readonly bufferSize: number;
+
+  private readonly loadedNamespaces = observable.box<string[]>();
+  private readonly watchingController = new AbortController();
+
+  // Lookups by id and self link run once per row of a list (its menu), once
+  // per warning of the cluster overview, and from details and logs. Kept
+  // alive, so that the index is built once per change of the items, and only
+  // for a store that is looked up in at all: a computed nobody reads is never
+  // evaluated.
+  private readonly lookups = computed(() => indexItems(this.items), { keepAlive: true });
+
+  constructor(
+    protected readonly dependencies: KubeObjectStoreDependencies,
+    public readonly api: A,
+    opts?: KubeObjectStoreOptions,
+  ) {
+    super();
+    this.limit = opts?.limit;
+    this.bufferSize = opts?.bufferSize ?? 50_000;
+
+    autoBind(this);
+    this.bindWatchEventsUpdater();
+  }
+
+  // TODO: Circular dependency: KubeObjectStore -> ClusterFrameContext -> NamespaceStore -> KubeObjectStore
+  @computed get contextItems(): K[] {
+    const namespaces = new Set(this.dependencies.context.contextNamespaces);
+
+    return this.items.filter((item) => {
+      const itemNamespace = item.getNs();
+
+      return !itemNamespace /* cluster-wide */ || namespaces.has(itemNamespace);
+    });
+  }
+
+  getTotalCount(): number {
+    return this.contextItems.length;
+  }
+
+  get query(): KubeApiQueryParams {
+    const { limit } = this;
+
+    if (!limit) {
+      return {};
+    }
+
+    return { limit };
+  }
+
+  getAllByNs(namespace: string | string[], strict = false): K[] {
+    const namespaces = [namespace].flat();
+
+    if (namespaces.length) {
+      const selected = new Set(namespaces);
+
+      return this.items.filter((item) => {
+        const itemNamespace = item.getNs();
+
+        return itemNamespace !== undefined && selected.has(itemNamespace);
+      });
+    }
+
+    if (!strict) {
+      return this.items;
+    }
+
+    return [];
+  }
+
+  getById(id: string): K | undefined {
+    return this.lookups.get().byId.get(id);
+  }
+
+  getByName(name: string, namespace?: string): K | undefined {
+    return this.items.find((item) => item.getName() === name && (namespace ? item.getNs() === namespace : true));
+  }
+
+  getByOwnerReference(apiVersion: string | undefined, kind: string, name: string, namespace: string): K[] {
+    return this.items.filter((item) => {
+      const ownerRefs = item.getOwnerRefs();
+      return (
+        item.getNs() === namespace &&
+        ownerRefs &&
+        ownerRefs.filter(
+          (ref) => (!apiVersion || ref.apiVersion === apiVersion) && ref.kind === kind && ref.name === name,
+        ).length > 0
+      );
+    });
+  }
+
+  getByPath(path: string): K | undefined {
+    return this.lookups.get().byPath.get(path);
+  }
+
+  getByLabel(labels: string[] | Partial<Record<string, string>>): K[] {
+    if (Array.isArray(labels)) {
+      return this.items.filter((item: K) => {
+        const itemLabels = item.getLabels();
+
+        return labels.every((label) => itemLabels.includes(label));
+      });
+    } else {
+      return this.items.filter((item: K) => {
+        const itemLabels = item.metadata.labels || {};
+
+        return object.entries(labels).every(([key, value]) => itemLabels[key] === value);
+      });
+    }
+  }
+
+  protected async loadItems({ namespaces, reqInit, onLoadFailure }: KubeObjectStoreLoadingParams): Promise<K[]> {
+    const isLoadingAll = this.dependencies.context.isLoadingAll(namespaces);
+
+    if (!this.api.isNamespaced || isLoadingAll) {
+      if (this.api.isNamespaced) {
+        this.loadedNamespaces.set([]);
+      }
+
+      const res = this.api.list({ reqInit }, this.query);
+
+      if (onLoadFailure) {
+        try {
+          return (await res) ?? [];
+        } catch (error) {
+          // An aborted request (e.g. the view unmounted before the list
+          // arrived) is not a real failure -- let it propagate so the
+          // abort-aware catch in `loadAll` can no-op on it instead of
+          // surfacing a spurious "Failed to load" error and blanking the list.
+          // The signal is checked too, for an error raised after the abort
+          // that does not carry the AbortError name.
+          if (isAbortError(error) || reqInit?.signal?.aborted) {
+            throw error;
+          }
+
+          onLoadFailure(new Error(`Failed to load ${this.api.apiBase}`, { cause: error }));
+
+          // reset the store because we are loading all, so that nothing is displayed
+          this.items.clear();
+          this.selectedItemsIds.clear();
+
+          return [];
+        }
+      }
+
+      return (await res) ?? [];
+    }
+
+    this.loadedNamespaces.set(namespaces);
+
+    const results = await Promise.allSettled(
+      namespaces.map((namespace) => this.api.list({ namespace, reqInit }, this.query)),
+    );
+    const res: K[] = [];
+
+    for (const result of results) {
+      switch (result.status) {
+        case "fulfilled":
+          res.push(...(result.value ?? []));
+          break;
+
+        case "rejected":
+          // See the cluster-scoped branch above: an aborted request must
+          // propagate, not be reported through onLoadFailure.
+          if (isAbortError(result.reason) || reqInit?.signal?.aborted) {
+            throw result.reason;
+          }
+
+          if (onLoadFailure) {
+            onLoadFailure(new Error(`Failed to load ${this.api.apiBase}`, { cause: result.reason }));
+          } else {
+            // if onLoadFailure is not provided then preserve old behaviour
+            throw result.reason;
+          }
+      }
+    }
+
+    return res;
+  }
+
+  protected filterItemsOnLoad(items: K[]) {
+    return items;
+  }
+
+  @action
+  async loadAll({
+    namespaces,
+    merge = true,
+    reqInit,
+    onLoadFailure,
+  }: KubeObjectStoreLoadAllParams = {}): Promise<undefined | K[]> {
+    namespaces ??= this.dependencies.context.contextNamespaces;
+    this.isLoading = true;
+
+    try {
+      const items = await this.loadItems({ namespaces, reqInit, onLoadFailure });
+
+      this.mergeItems(items, { merge, namespaces });
+
+      this.isLoaded = true;
+      this.failedLoading = false;
+
+      return items;
+    } catch (error) {
+      // A load aborted via its `reqInit.signal` (e.g. the view unmounted before
+      // the list arrived, which happens on essentially every view under
+      // `React.StrictMode`) is not a real failure. Nothing is waiting on the
+      // result, so bail out without logging, resetting, or flipping
+      // `failedLoading` — otherwise a late abort from an unmounted view could
+      // wipe items freshly loaded by a remounted one.
+      if (isAbortError(error) || reqInit?.signal?.aborted) {
+        return undefined;
+      }
+
+      console.warn("[KubeObjectStore] loadAll failed", this.api.apiBase, error);
+      this.resetOnError(error);
+      this.failedLoading = true;
+    } finally {
+      this.isLoading = false;
+    }
+
+    return undefined;
+  }
+
+  @action
+  async reloadAll(opts: { force?: boolean; namespaces?: string[]; merge?: boolean } = {}): Promise<undefined | K[]> {
+    const { force = false, ...loadingOptions } = opts;
+
+    if (this.isLoading || (this.isLoaded && !force)) {
+      return undefined;
+    }
+
+    return this.loadAll(loadingOptions);
+  }
+
+  @action
+  protected mergeItems(
+    partialItems: K[],
+    { merge = true, updateStore = true, sort = true, filter = true, namespaces }: MergeItemsOptions,
+  ): K[] {
+    let items = partialItems;
+
+    // update existing items
+    if (merge && this.api.isNamespaced) {
+      const ns = new Set(namespaces);
+
+      items = [...this.items.filter((item) => !ns.has(item.getNs() as string)), ...partialItems];
+    }
+
+    if (filter) items = this.filterItemsOnLoad(items);
+    if (sort) items = this.sortItems(items);
+    if (updateStore) this.items.replace(items);
+
+    return items;
+  }
+
+  protected resetOnError(error: any) {
+    if (error) this.reset();
+  }
+
+  protected async loadItem(params: { name: string; namespace?: string }): Promise<K | null> {
+    return this.api.get(params);
+  }
+
+  @action
+  async load(params: { name: string; namespace?: string }): Promise<K> {
+    const { name, namespace } = params;
+    let item: K | null | undefined = this.getByName(name, namespace);
+
+    if (!item) {
+      item = await this.loadItem(params);
+      assert(item, "Failed to load item from kube");
+      const newItems = this.sortItems([...this.items, item]);
+
+      this.items.replace(newItems);
+    }
+
+    return item;
+  }
+
+  @action
+  async loadFromPath(resourcePath: string) {
+    const parsedApi = parseKubeApi(resourcePath);
+
+    assert(parsedApi, "resourcePath must be a valid kube api");
+
+    const { namespace, name } = parsedApi;
+
+    assert(name, "name must be part of resourcePath");
+
+    return this.load({ name, namespace });
+  }
+
+  protected async createItem(
+    params: { name: string; namespace?: string },
+    data?: PartialDeep<K, { recurseIntoArrays: true }>,
+  ): Promise<K | null> {
+    return this.api.create(params, data);
+  }
+
+  async create(
+    params: { name: string; namespace?: string },
+    data?: PartialDeep<K, { recurseIntoArrays: true }>,
+  ): Promise<K> {
+    const newItem = await this.createItem(params, data);
+
+    assert(newItem, "Failed to create item from kube");
+    const items = this.sortItems([...this.items, newItem]);
+
+    this.items.replace(items);
+
+    return newItem;
+  }
+
+  private postUpdate(newItem: K): K {
+    this.putItem(newItem);
+
+    return newItem;
+  }
+
+  async patch(item: K, patch: PartialDeep<K>, strategy: "strategic" | "merge"): Promise<K>;
+  async patch(item: K, patch: JsonPatch, strategy?: "json"): Promise<K>;
+  async patch(item: K, patch: PartialDeep<K> | JsonPatch, strategy: KubeApiPatchType = "json"): Promise<K> {
+    let rawItem: K | null;
+
+    if (strategy === "json") {
+      if (!Array.isArray(patch)) {
+        throw new Error("For 'json' patch strategy, patch must be a JsonPatch array");
+      }
+      rawItem = await this.api.patch(
+        {
+          name: item.getName(),
+          namespace: item.getNs(),
+        },
+        patch as JsonPatch,
+        strategy,
+      );
+    } else {
+      if (Array.isArray(patch)) {
+        throw new Error("For 'strategic' or 'merge' patch strategy, patch must be a PartialDeep<Object>");
+      }
+      rawItem = await this.api.patch(
+        {
+          name: item.getName(),
+          namespace: item.getNs(),
+        },
+        patch as PartialDeep<K>,
+        strategy,
+      );
+    }
+
+    assert(rawItem, `Failed to patch ${item.getScopedName()} of ${item.kind} ${item.apiVersion}`);
+
+    return this.postUpdate(rawItem);
+  }
+
+  async update(item: K, data: PartialDeep<K>): Promise<K> {
+    const rawItem = await this.api.update(
+      {
+        name: item.getName(),
+        namespace: item.getNs(),
+      },
+      data,
+    );
+
+    assert(rawItem, `Failed to update ${item.getScopedName()} of ${item.kind} ${item.apiVersion}`);
+
+    return this.postUpdate(rawItem);
+  }
+
+  async remove(item: K) {
+    await this.api.delete({ name: item.getName(), namespace: item.getNs() });
+    this.selectedItemsIds.delete(item.getId());
+  }
+
+  async removeWithOptions(item: K, deleteOptions?: DeleteOptions) {
+    await this.api.delete({ name: item.getName(), namespace: item.getNs(), deleteOptions });
+    this.selectedItemsIds.delete(item.getId());
+  }
+
+  async removeSelectedItems() {
+    await Promise.all(this.selectedItems.map((item) => this.remove(item)));
+  }
+
+  async removeItems(items: K[]) {
+    await Promise.all(items.map((item) => this.remove(item)));
+  }
+
+  // collect items from watch-api events to avoid UI blowing up with huge streams of data
+  protected readonly eventsBuffer = observable.array<IKubeWatchEvent<D>>([], { deep: false });
+
+  protected bindWatchEventsUpdater(delay = 1000) {
+    reaction(
+      () => [...this.eventsBuffer],
+      () => this.updateFromEventsBuffer(),
+      {
+        delay,
+      },
+    );
+  }
+
+  /**
+   * Ends every watch of the store and refuses new ones, for a store whose API
+   * is gone: a watch of a resource the cluster no longer serves only fails.
+   */
+  stopWatching(): void {
+    this.watchingController.abort();
+  }
+
+  subscribe({ onLoadFailure, abortController = new AbortController() }: KubeObjectStoreSubscribeParams = {}): Disposer {
+    if (abortController.signal.aborted || this.watchingController.signal.aborted) {
+      // The subscriber went away before it subscribed, e.g. a view that
+      // unmounted while its list was loading, or the store stopped watching.
+      // A watch started now would outlive it.
+      return noop;
+    }
+
+    // The listener goes when the subscriber's watch ends, so that a store that
+    // keeps watching does not collect one for every subscription it had.
+    this.watchingController.signal.addEventListener("abort", () => abortController.abort(), {
+      once: true,
+      signal: abortController.signal,
+    });
+
+    if (this.api.isNamespaced) {
+      void (async () => {
+        try {
+          const loadedNamespaces = await Promise.race([
+            rejectPromiseBy(abortController.signal),
+            waitUntilDefined(() => this.loadedNamespaces.get()),
+          ]);
+
+          if (this.dependencies.context.isGlobalWatchEnabled() && loadedNamespaces.length === 0) {
+            this.watchNamespace("", abortController, { onLoadFailure });
+          } else {
+            for (const namespace of loadedNamespaces) {
+              this.watchNamespace(namespace, abortController, { onLoadFailure });
+            }
+          }
+        } catch (error) {
+          console.error(`[KUBE-OBJECT-STORE]: failed to subscribe to ${this.api.apiBase}`, error);
+        }
+      })();
+    } else {
+      this.watchNamespace("", abortController, { onLoadFailure });
+    }
+
+    return () => abortController.abort();
+  }
+
+  private watchNamespace(namespace: string, abortController: AbortController, opts: KubeObjectStoreSubscribeParams) {
+    if (!this.api.getResourceVersion(namespace)) {
+      return;
+    }
+
+    let timedRetry: NodeJS.Timeout;
+    let cancelReconnect: Disposer | undefined;
+    // Failures in a row since the watch last connected.
+    let failures = 0;
+    const signal = abortController.signal;
+    const { watchReconnect } = this.dependencies;
+
+    const retryLater = () => {
+      clearTimeout(timedRetry);
+      cancelReconnect?.();
+      failures += 1;
+
+      if (watchReconnect) {
+        cancelReconnect = watchReconnect.schedule(startNewWatch, failures);
+      } else {
+        timedRetry = setTimeout(startNewWatch, 5000);
+      }
+    };
+
+    const onConnect = () => {
+      failures = 0;
+      watchReconnect?.connected();
+    };
+
+    const startNewWatch = () => {
+      // A retry or a reload scheduled before the abort must not start a
+      // watch the subscriber can no longer stop.
+      if (signal.aborted) return;
+
+      this.api.watch({
+        namespace,
+        abortController,
+        callback,
+        onConnect,
+      });
+    };
+
+    const callback: KubeApiWatchCallback<D> = (data, error) => {
+      // The fetch of an aborted watch rejects with a DOMException, which is
+      // not the `{ type: "aborted" }` shape node-fetch used; without checking
+      // the signal the abort would be retried.
+      if (signal.aborted || !this.isLoaded || (error as Record<string, unknown> | null)?.type === "aborted") return;
+
+      if (error instanceof Response) {
+        if (error.status === 404 || error.status === 401) {
+          // api has gone, or credentials are not permitted, let's not retry
+          return;
+        }
+
+        // not sure what to do, best to retry
+        retryLater();
+      } else if (error instanceof KubeStatus && error.code === 410) {
+        clearTimeout(timedRetry);
+        // resourceVersion has gone, let's try to reload
+        timedRetry = setTimeout(() => {
+          void (
+            namespace
+              ? this.loadAll({ namespaces: [namespace], reqInit: { signal }, ...opts })
+              : this.loadAll({ merge: false, reqInit: { signal }, ...opts })
+          ).then(startNewWatch);
+        }, 1000);
+      } else if (error) {
+        // not sure what to do, best to retry
+        retryLater();
+      }
+
+      if (data) {
+        // Also for an API whose `watch` does not call `onConnect`.
+        failures = 0;
+        this.eventsBuffer.push(data);
+      }
+    };
+
+    signal.addEventListener("abort", () => {
+      clearTimeout(timedRetry);
+      cancelReconnect?.();
+    });
+    startNewWatch();
+  }
+
+  @action
+  protected updateFromEventsBuffer() {
+    const events = this.eventsBuffer.clear();
+
+    if (!events.length) return;
+
+    // Build once per flush, so direct array writes, reloads and resets cannot
+    // leave a stale index. Tombstones keep later indices valid after a delete.
+    const items: (K | undefined)[] = this.getItems();
+    const indexByUid = new Map(items.map((item, index) => [item!.getId(), index]));
+    let changed = false;
+    let needsSort = false;
+
+    for (const event of events) {
+      if (event.type === "ERROR") continue;
+
+      try {
+        const { type, object } = event;
+        const uid = object.metadata?.uid;
+
+        if (!uid) {
+          this.dependencies.logger.warn("[KUBE-STORE]: watch event did not have defined .metadata.uid, skipping", {
+            event,
+          });
+          continue;
+        }
+
+        const index = indexByUid.get(uid);
+        const item = index === undefined ? undefined : items[index];
+
+        switch (type) {
+          case "ADDED":
+          case "MODIFIED": {
+            // Kubernetes versions are opaque: equality alone identifies a
+            // replay. Do not construct and bind another copy of the same object.
+            if (
+              item &&
+              object.metadata.resourceVersion &&
+              item.metadata.resourceVersion === object.metadata.resourceVersion
+            ) {
+              break;
+            }
+
+            const newItem = new this.api.objectConstructor(object);
+
+            if (index === undefined) {
+              indexByUid.set(uid, items.length);
+              items.push(newItem);
+              needsSort = true;
+            } else {
+              needsSort ||= this.sortKeyChanged(item!, newItem);
+              items[index] = newItem;
+            }
+
+            changed = true;
+            break;
+          }
+          case "DELETED":
+            if (index !== undefined) {
+              items[index] = undefined;
+              indexByUid.delete(uid);
+              changed = true;
+            }
+            break;
+        }
+      } catch (error) {
+        this.dependencies.logger.error("[KUBE-STORE]: failed to handle event from watch buffer", { error, event });
+      }
+    }
+
+    if (changed) {
+      const retained = items.filter((item): item is K => item !== undefined).slice(-this.bufferSize);
+
+      this.items.replace(needsSort ? this.sortItems(retained) : retained);
+    }
+  }
+}

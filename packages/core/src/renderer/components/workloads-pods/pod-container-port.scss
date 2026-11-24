@@ -1,0 +1,39 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+@use "../vars" as *;
+
+.PodContainerPort {
+  display: flex;
+  align-items: center;
+
+  &.waiting {
+    opacity: 0.5;
+    pointer-events: none;
+  }
+
+  &:not(:last-child) {
+    margin-bottom: $margin;
+  }
+
+  span {
+    cursor: pointer;
+    color: var(--primary);
+    text-decoration: underline;
+    position: relative;
+    padding-right: 1em;
+    // Push the Forward button to the right edge so the buttons line up in a
+    // column across ports regardless of the port text length.
+    margin-right: auto;
+  }
+
+  .portInput {
+    display: inline-block !important;
+    width: 70px;
+    margin-left: 10px;
+    margin-right: 10px;
+  }
+}

@@ -1,0 +1,172 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import { getInjectable } from "@ogre-tools/injectable";
+import { getSecondsFromUnixEpoch } from "../../../utils/date/get-current-date-time";
+import apiBaseInjectable from "../../api-base.injectable";
+import { calculateAdaptiveStep } from "./adaptive-step";
+
+import type { MetricData } from "../metrics.api";
+
+export interface RequestMetricsParams {
+  /**
+   * timestamp in seconds or valid date-string
+   */
+  start?: number | string;
+
+  /**
+   * timestamp in seconds or valid date-string
+   */
+  end?: number | string;
+
+  /**
+   * step in seconds
+   * When not provided, automatically calculated based on time range:
+   * - <= 4 hours: 60s (1 minute)
+   * - <= 1 day: 600s (10 minutes)
+   * - <= 4 days: 3600s (1 hour)
+   * - <= 14 days: 10800s (3 hours)
+   * - <= 30 days: 21600s (6 hours)
+   * - > 30 days: 43200s (12 hours)
+   */
+  step?: number;
+
+  /**
+   * time-range in seconds for data aggregation
+   * @default 3600 (1 hour)
+   */
+  range?: number;
+
+  /**
+   * rbac-proxy validation param
+   */
+  namespace?: string;
+}
+
+// Written out rather than derived from the injectable: it is part of the
+// extension API (`Renderer.K8sApi.RequestMetrics`), and a type derived through
+// `instantiate` would make the published declaration import the DI library.
+export type RequestMetrics = {
+  (query: string, params?: RequestMetricsParams): Promise<MetricData>;
+  (query: string[], params?: RequestMetricsParams): Promise<MetricData[]>;
+  <Keys extends string>(
+    query: Record<Keys, Partial<Record<string, string>>>,
+    params?: RequestMetricsParams,
+  ): Promise<Record<Keys, MetricData>>;
+};
+
+function normalizeTimestampToUnixSeconds(value: number | string | undefined): number | undefined {
+  if (typeof value === "number") {
+    return value;
+  }
+
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const milliseconds = Date.parse(value);
+
+  if (!Number.isFinite(milliseconds)) {
+    return undefined;
+  }
+
+  return Math.floor(milliseconds / 1000);
+}
+
+const requestMetricsInjectable = getInjectable({
+  id: "request-metrics",
+  instantiate: (di): RequestMetrics => {
+    const apiBase = di.inject(apiBaseInjectable);
+    const inFlightRequests = new Map<
+      string,
+      Promise<MetricData | MetricData[] | Partial<Record<string, MetricData>>>
+    >();
+
+    function requestMetrics(query: string, params?: RequestMetricsParams): Promise<MetricData>;
+    function requestMetrics(query: string[], params?: RequestMetricsParams): Promise<MetricData[]>;
+    function requestMetrics<Keys extends string>(
+      query: Record<Keys, Partial<Record<string, string>>>,
+      params?: RequestMetricsParams,
+    ): Promise<Record<Keys, MetricData>>;
+    async function requestMetrics(
+      query: string | string[] | Partial<Record<string, Partial<Record<string, string>>>>,
+      params: RequestMetricsParams = {},
+    ): Promise<MetricData | MetricData[] | Partial<Record<string, MetricData>>> {
+      const { range = 3600, namespace } = params;
+      let { start, end, step } = params;
+
+      if (!start && !end) {
+        const now = getSecondsFromUnixEpoch();
+
+        start = now - range;
+        end = now;
+      }
+
+      const normalizedStart = normalizeTimestampToUnixSeconds(start);
+      const normalizedEnd = normalizeTimestampToUnixSeconds(end);
+
+      if (normalizedStart !== undefined) {
+        start = normalizedStart;
+      }
+
+      if (normalizedEnd !== undefined) {
+        end = normalizedEnd;
+      }
+
+      // Calculate actual range in seconds
+      const actualRange =
+        normalizedStart !== undefined && normalizedEnd !== undefined ? normalizedEnd - normalizedStart : range;
+
+      // Use adaptive step if not explicitly provided
+      if (step === undefined) {
+        step = calculateAdaptiveStep(actualRange);
+      }
+
+      // Prometheus evaluates range queries at `start + n * step`. When the range
+      // is not a multiple of the step the last evaluation falls before `end`, and
+      // up to one step of the newest data is missing (or everything, for objects
+      // younger than that). Move `start` back so that `end` is an evaluation point.
+      if (typeof start === "number" && typeof end === "number" && step > 0 && end > start) {
+        start = end - Math.ceil((end - start) / step) * step;
+      }
+
+      const requestKey = JSON.stringify({
+        query,
+        start,
+        end,
+        step,
+        namespace,
+      });
+      const existingRequest = inFlightRequests.get(requestKey);
+
+      if (existingRequest) {
+        return existingRequest;
+      }
+
+      const requestPromise = apiBase
+        .post("/metrics", {
+          data: query,
+          query: {
+            start,
+            end,
+            step,
+            kubernetes_namespace: namespace,
+          },
+        })
+        .finally(() => {
+          inFlightRequests.delete(requestKey);
+        });
+
+      inFlightRequests.set(requestKey, requestPromise);
+
+      return requestPromise;
+    }
+
+    return requestMetrics;
+  },
+});
+
+export default requestMetricsInjectable;

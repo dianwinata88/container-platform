@@ -1,0 +1,294 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+@use "sass:meta";
+@use "../components/mixins";
+@use "../components/vars" as *;
+
+/*
+ * Import Tailwind through its explicit `.css` entry rather than the bare
+ * "tailwindcss" specifier. Dart Sass resolves the bare form to
+ * node_modules/tailwindcss/index.css and inlines it as a Sass @import, which
+ * is deprecated (removed in Dart Sass 3.0). A URL ending in ".css" is instead
+ * emitted verbatim as a plain CSS @import, so Sass never touches it and the
+ * @tailwindcss/postcss plugin still expands it (theme, preflight, utilities).
+ */
+@import "tailwindcss/index.css";
+
+@include meta.load-css("fonts");
+
+@config "../../../tailwind.config.js";
+
+/*
+ * Wire the Tailwind "dark:" variant to the real theme mechanism. The theme
+ * system keeps dark as the default and toggles "body.theme-light" for light
+ * (themes/apply-lens-theme.injectable.ts) — there is no ".dark" class, so
+ * the Tailwind stock "darkMode: class" would never match. This makes "dark:"
+ * apply to any element that is not inside a light-themed body. Prefer the
+ * "var(--…)" theme tokens over "dark:"; they re-theme automatically.
+ *
+ * NOTE: this must be a CSS block comment, not a "//" line comment. The file is
+ * processed by the Tailwind PostCSS plugin, whose CSS parser does not treat
+ * "//" as a comment and would read an apostrophe as an unterminated string.
+ */
+@custom-variant dark (&:where(body:not(.theme-light), body:not(.theme-light) *));
+
+:root {
+  --unit: 8px;
+  --padding: var(--unit);
+  --margin: var(--unit);
+  --border-radius: 3px;
+  --font-main: "Roboto", "Helvetica", "Arial", sans-serif;
+  --font-monospace: Lucida Console, Monaco, Consolas, monospace; // some defaults
+  --font-terminal: var(--font-monospace); // overridden in terminal.ts, managed by common/user-store.ts
+  --font-size-small: calc(1.5 * var(--unit));
+  --font-size: calc(1.75 * var(--unit));
+  --font-size-big: calc(2 * var(--unit));
+  --main-layout-header: 40px;
+  --status-bar-height: 21px;
+}
+
+/*
+ * NOTE: block comment on purpose (see the file header) -- a "//" line comment
+ * is not stripped here and its apostrophes break the Tailwind CSS parser.
+ *
+ * The reset lives in Tailwind's `base` layer so utility classes (loaded in the
+ * later `utilities` layer) win over it. An unlayered reset would beat every
+ * layered utility regardless of specificity, silently killing all margin and
+ * padding utilities (`mb-5`, `ml-auto`, ...) across the app. Component SCSS
+ * stays unlayered and therefore still overrides both.
+ */
+@layer base {
+  *,
+  *:before,
+  *:after {
+    box-sizing: border-box;
+    padding: 0;
+    margin: 0;
+    border: 0;
+    outline: none;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 16px;
+  height: 15px; // Align sizes visually
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollBarColor);
+  background-clip: padding-box;
+  border: 4px solid transparent;
+  border-right-width: 5px;
+  border-radius: 16px;
+}
+
+::-webkit-scrollbar-corner {
+  background-color: transparent;
+}
+
+*:target {
+  color: var(--textColorAccent);
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  color: var(--textColorPrimary);
+  font-size: var(--font-size);
+  font-family: var(--font-main);
+}
+
+#terminal-init {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 0;
+  visibility: hidden;
+  overflow: hidden;
+}
+
+#app {
+  height: 100%;
+  min-height: 100%;
+  background-color: var(--mainBackground);
+
+  &:empty {
+    background-color: transparent;
+  }
+
+  > * {
+    height: inherit;
+  }
+}
+
+fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+label {
+  color: var(--textColorSecondary);
+}
+
+ol,
+ul {
+  margin: 0;
+  list-style: none;
+}
+
+h1 {
+  color: var(--textColorPrimary);
+  font-size: 28px;
+  font-weight: normal;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+h2 {
+  @extend h1;
+  font-size: 24px;
+}
+
+h3 {
+  @extend h2;
+  font-size: 20px;
+}
+
+h4 {
+  @extend h3;
+  font-size: 18px;
+}
+
+h5 {
+  @extend h4;
+  padding: $padding * 0.5 0;
+  font-size: 16px;
+}
+
+h6 {
+  @extend h5;
+  font-size: 12px;
+}
+
+small {
+  font-size: $font-size-small;
+}
+
+code {
+  display: inline-block;
+  padding: 0.2em;
+  vertical-align: middle;
+  border-radius: $radius;
+  font-family: $font-monospace;
+  font-size: calc(var(--font-size) * 0.9);
+  color: #b4b5b4;
+
+  &.block {
+    @include mixins.hidden-scrollbar;
+    background: #1a1919;
+    display: block;
+    white-space: pre;
+    padding: $padding * 2;
+  }
+}
+
+a {
+  color: inherit;
+  cursor: pointer;
+
+  [href] {
+    text-decoration: underline;
+  }
+
+  &:not([href]) {
+    border-bottom: 1px dotted;
+    text-decoration: none;
+  }
+}
+
+iframe {
+  // Remove default white background on iframes
+  color-scheme: auto;
+}
+
+// colors
+.success {
+  color: var(--colorSuccess);
+}
+
+.info {
+  color: var(--colorInfo);
+}
+
+.error {
+  color: var(--colorError);
+}
+
+.warning {
+  color: var(--colorWarning);
+}
+
+.contrast {
+  color: var(--textColorAccent);
+}
+
+.text-secondary {
+  color: var(--textColorSecondary);
+}
+
+.nobr {
+  white-space: nowrap;
+}
+
+.flow {
+  --flow-space: #{$margin * 1.5};
+
+  &:not(.column) {
+    > * + * {
+      margin-left: var(--flow-space);
+    }
+  }
+
+  &.column {
+    > * + * {
+      margin-top: var(--flow-space);
+    }
+  }
+}
+
+/*app's common loading indicator, displaying on the route transitions*/
+#loading {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  margin: -15px;
+  z-index: 1000;
+
+  &.hidden {
+    display: none;
+  }
+}
+
+// hack-fix: remove crappy yellow background from auto-filled inputs in chrome
+@keyframes autofill-remove-bgc {
+  to {
+    color: inherit;
+    background: inherit;
+  }
+}
+
+input:-webkit-autofill {
+  -webkit-animation-name: autofill-remove-bgc;
+  -webkit-animation-fill-mode: both;
+}

@@ -1,0 +1,30 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+@use "../mixins";
+
+.InfoPanel {
+  @include mixins.hidden-scrollbar;
+
+  background: var(--dockInfoBackground);
+  padding: var(--padding) calc(var(--padding) * 2);
+  flex-shrink: 0;
+
+  .Spinner {
+    margin-right: var(--padding);
+  }
+
+  > .controls {
+    white-space: nowrap;
+    flex: 1 1;
+
+    &:not(:empty) + .info {
+      min-height: 25px;
+      padding-left: var(--padding);
+      padding-right: var(--padding);
+    }
+  }
+}

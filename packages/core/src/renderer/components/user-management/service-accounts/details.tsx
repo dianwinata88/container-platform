@@ -1,0 +1,168 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import "./details.scss";
+
+import { Icon } from "@freelensapp/icon";
+import { Link } from "@freelensapp/routing";
+import { Spinner } from "@freelensapp/spinner";
+import { withInjectables } from "@ogre-tools/injectable-react";
+import { autorun, observable, runInAction } from "mobx";
+import { observer } from "mobx-react";
+import React from "react";
+import secretStoreInjectable from "../../config-secrets/store.injectable";
+import { DrawerItem, DrawerTitle } from "../../drawer";
+import getDetailsUrlInjectable from "../../kube-detail-params/get-details-url.injectable";
+import { ServiceAccountsSecret } from "./secret";
+
+import type { Secret, ServiceAccount } from "@freelensapp/kube-object";
+
+import type { SecretStore } from "../../config-secrets/store";
+import type { GetDetailsUrl } from "../../kube-detail-params/get-details-url.injectable";
+import type { KubeObjectDetailsProps } from "../../kube-object-details";
+
+export interface ServiceAccountsDetailsProps extends KubeObjectDetailsProps<ServiceAccount> {}
+
+interface Dependencies {
+  secretStore: SecretStore;
+  getDetailsUrl: GetDetailsUrl;
+}
+
+@observer
+class NonInjectedServiceAccountsDetails extends React.Component<ServiceAccountsDetailsProps & Dependencies> {
+  private readonly disposers: (() => void)[] = [];
+  readonly secrets = observable.array<Secret | string>();
+  readonly imagePullSecrets = observable.array<Secret | string>();
+
+  private defensiveLoadSecretIn =
+    (secretStore: SecretStore, namespace: string) =>
+    ({ name }: { name: string }) =>
+      secretStore.load({ name, namespace }).catch(() => name);
+
+  componentDidMount(): void {
+    // Capture props before the autorun: this is a single-argument autorun, so its
+    // async callback IS the tracking function and mobx-react 9 forbids reading
+    // this.props inside it (directly or via the defensiveLoadSecretIn closure it
+    // invokes before the first await).
+    const { object: serviceAccount, secretStore } = this.props;
+
+    this.disposers.push(
+      autorun(async () => {
+        runInAction(() => {
+          this.secrets.clear();
+          this.imagePullSecrets.clear();
+        });
+
+        const namespace = serviceAccount?.getNs();
+
+        if (!namespace) {
+          return;
+        }
+
+        const defensiveLoadSecret = this.defensiveLoadSecretIn(secretStore, namespace);
+
+        const secretLoaders = Promise.all(serviceAccount.getSecrets().map(defensiveLoadSecret));
+        const imagePullSecretLoaders = Promise.all(serviceAccount.getImagePullSecrets().map(defensiveLoadSecret));
+        const [secrets, imagePullSecrets] = await Promise.all([secretLoaders, imagePullSecretLoaders]);
+
+        runInAction(() => {
+          this.secrets.replace(secrets);
+          this.imagePullSecrets.replace(imagePullSecrets);
+        });
+      }),
+    );
+  }
+
+  componentWillUnmount() {
+    this.disposers.forEach((dispose) => dispose());
+  }
+
+  renderSecrets() {
+    const { secrets } = this;
+
+    if (!secrets) {
+      return <Spinner center />;
+    }
+
+    return secrets.map((secret) => (
+      <ServiceAccountsSecret key={typeof secret === "string" ? secret : secret.getName()} secret={secret} />
+    ));
+  }
+
+  renderImagePullSecrets() {
+    const { imagePullSecrets } = this;
+
+    if (!imagePullSecrets) {
+      return <Spinner center />;
+    }
+
+    return this.renderSecretLinks(imagePullSecrets);
+  }
+
+  renderSecretLinks(secrets: (Secret | string)[]) {
+    return secrets.map((secret) => {
+      if (typeof secret === "string") {
+        return (
+          <div key={secret}>
+            {secret}
+            <Icon small material="warning" tooltip="Secret is not found" />
+          </div>
+        );
+      }
+
+      return (
+        <Link key={secret.getId()} to={this.props.getDetailsUrl(secret.selfLink)}>
+          {secret.getName()}
+        </Link>
+      );
+    });
+  }
+
+  render() {
+    const { object: serviceAccount, secretStore } = this.props;
+
+    if (!serviceAccount) {
+      return null;
+    }
+    const tokens = secretStore.items.filter(
+      (secret) =>
+        secret.getNs() == serviceAccount.getNs() &&
+        secret
+          .getAnnotations()
+          .some((annot) => annot == `kubernetes.io/service-account.name: ${serviceAccount.getName()}`),
+    );
+    const imagePullSecrets = serviceAccount.getImagePullSecrets();
+
+    return (
+      <div className="ServiceAccountsDetails">
+        {tokens.length > 0 && (
+          <DrawerItem name="Tokens" className="links">
+            {this.renderSecretLinks(tokens)}
+          </DrawerItem>
+        )}
+        {imagePullSecrets.length > 0 && (
+          <DrawerItem name="ImagePullSecrets" className="links">
+            {this.renderImagePullSecrets()}
+          </DrawerItem>
+        )}
+
+        <DrawerTitle>Mountable secrets</DrawerTitle>
+        <div className="secrets">{this.renderSecrets()}</div>
+      </div>
+    );
+  }
+}
+
+export const ServiceAccountsDetails = withInjectables<Dependencies, ServiceAccountsDetailsProps>(
+  NonInjectedServiceAccountsDetails,
+  {
+    getProps: (di, props) => ({
+      ...props,
+      getDetailsUrl: di.inject(getDetailsUrlInjectable),
+      secretStore: di.inject(secretStoreInjectable),
+    }),
+  },
+);

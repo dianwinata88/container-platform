@@ -1,0 +1,57 @@
+{
+  "name": "@freelensapp/ensure-binaries",
+  "version": "2.1.1-0",
+  "private": true,
+  "description": "CLI for downloading configured versions of the bundled versions of CLIs",
+  "homepage": "https://freelens.app",
+  "bugs": {
+    "url": "https://github.com/freelensapp/freelens/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/freelensapp/freelens.git"
+  },
+  "license": "MIT",
+  "type": "module",
+  "author": {
+    "name": "Freelens Authors",
+    "email": "freelens@freelens.app"
+  },
+  "main": "dist/index.js",
+  "bin": {
+    "ensure-binaries": "bin/ensure-binaries.js",
+    "update-binaries-lock": "bin/update-binaries-lock.js",
+    "update-kubectl-checksums": "bin/update-kubectl-checksums.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc --pretty --project .",
+    "build:dev": "tsc --pretty --project .",
+    "clean:dist": "pnpm dlx rimraf@6.1.4 dist",
+    "start": "node ./dist/index.js"
+  },
+  "dependencies": {
+    "arg": "catalog:",
+    "cli-progress": "catalog:",
+    "gunzip-maybe": "catalog:",
+    "openpgp": "catalog:",
+    "sigstore": "catalog:",
+    "tar-stream": "catalog:",
+    "undici": "catalog:",
+    "yauzl-promise": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/cli-progress": "catalog:",
+    "@types/gunzip-maybe": "catalog:",
+    "@types/node": "catalog:",
+    "@types/yauzl-promise": "catalog:",
+    "typescript": "catalog:"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

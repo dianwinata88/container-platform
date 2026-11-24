@@ -1,0 +1,24 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+$custom-resource-condition-colors: (
+  Accepted: var(--colorOk),
+  Available: var(--colorOk),
+  Succeeded: var(--colorOk),
+  Success: var(--colorOk),
+  Ready: var(--colorSuccess),
+);
+
+.CustomResourceDetails {
+  .conditions {
+    @each $status, $color in $custom-resource-condition-colors {
+      .#{$status} {
+        background: $color;
+        color: white;
+      }
+    }
+  }
+}

@@ -1,0 +1,295 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import assert from "node:assert";
+import { disposer } from "@freelensapp/utilities";
+import { FitAddon } from "@xterm/addon-fit";
+import { WebLinksAddon } from "@xterm/addon-web-links";
+import { Terminal as XTerm } from "@xterm/xterm";
+import { debounce } from "es-toolkit/compat";
+import { reaction } from "mobx";
+import { TerminalChannels } from "../../../../common/terminal/channels";
+import { eraseTerminalLine } from "../../../api/terminal-api";
+import { handleMacNaturalTextEditingKey } from "./terminal-key-mapping";
+
+import type { Logger } from "@freelensapp/logger";
+
+import type { IComputedValue } from "mobx";
+
+import type { TerminalStatusLevel } from "../../../../common/terminal/channels";
+import type { OpenLinkInBrowser } from "../../../../common/utils/open-link-in-browser.injectable";
+import type { TerminalFont } from "../../../../features/terminal/renderer/fonts/token";
+import type { TerminalConfig } from "../../../../features/user-preferences/common/preferences-helpers";
+import type { TerminalApi } from "../../../api/terminal-api";
+import type { TabId } from "../dock/store";
+
+export interface TerminalDependencies {
+  readonly spawningPool: HTMLElement;
+  readonly terminalConfig: IComputedValue<TerminalConfig>;
+  readonly terminalCopyOnSelect: IComputedValue<boolean>;
+  readonly terminalFonts: TerminalFont[];
+  readonly isMac: boolean;
+  readonly xtermColorTheme: IComputedValue<Record<string, string>>;
+  readonly logger: Logger;
+  openLinkInBrowser: OpenLinkInBrowser;
+}
+
+export interface TerminalArguments {
+  tabId: TabId;
+  api: TerminalApi;
+}
+
+export class Terminal {
+  private readonly xterm: XTerm;
+  private readonly fitAddon = new FitAddon();
+  private readonly webLinksAddon = new WebLinksAddon((event, link) => this.dependencies.openLinkInBrowser(link));
+  private scrollPos = 0;
+  /**
+   * Whether an `error`-level status line was written. Such a line keeps its
+   * place above the prompt, which means the buffer must not be cleared once
+   * the session becomes ready.
+   */
+  private hasStickyStatus = false;
+  private readonly disposer = disposer();
+  public readonly tabId: TabId;
+  protected readonly api: TerminalApi;
+
+  private get elem() {
+    return this.xterm.element!;
+  }
+
+  private get viewport() {
+    return this.elem.querySelector(".xterm-viewport")!;
+  }
+
+  attachTo(parentElem: HTMLElement) {
+    assert(this.elem, "Terminal should always be mounted somewhere");
+    parentElem.appendChild(this.elem);
+    this.onActivate();
+  }
+
+  detach() {
+    const { elem } = this;
+
+    if (elem) {
+      this.dependencies.spawningPool.appendChild(elem);
+    }
+  }
+
+  get fontFamily() {
+    const nameFromConfig = this.dependencies.terminalConfig.get().fontFamily;
+    const nameFromAlias = this.dependencies.terminalFonts.find((font) => font.alias === nameFromConfig)?.name;
+
+    return nameFromAlias || nameFromConfig;
+  }
+
+  get fontSize() {
+    return this.dependencies.terminalConfig.get().fontSize;
+  }
+
+  constructor(
+    protected readonly dependencies: TerminalDependencies,
+    { tabId, api }: TerminalArguments,
+  ) {
+    this.tabId = tabId;
+    this.api = api;
+
+    this.xterm = new XTerm({
+      cursorBlink: true,
+      cursorStyle: "bar",
+      fontSize: this.fontSize,
+      fontFamily: this.fontFamily,
+    });
+    // enable terminal addons
+    this.xterm.loadAddon(this.fitAddon);
+    this.xterm.loadAddon(this.webLinksAddon);
+
+    this.xterm.open(this.dependencies.spawningPool);
+    this.xterm.attachCustomKeyEventHandler(this.keyHandler);
+    this.xterm.onSelectionChange(this.onSelectionChange);
+
+    // bind events
+    const onDataHandler = this.xterm.onData(this.onData);
+    let firstReady = true;
+    const onReady = () => {
+      /**
+       * The transient status line is unterminated, so it must be erased before
+       * the prompt is written over it, and every connection writes one, a
+       * reconnect included. Passing `onClear` as xterm's write callback is
+       * what orders the erase before the clear despite the asynchronous write
+       * queue. The buffer is cleared only on the first connection, so that a
+       * reconnect keeps the history, and reported errors are sticky: they
+       * suppress the clear so that they stay visible above the prompt.
+       */
+      const clear = firstReady && !this.hasStickyStatus;
+
+      firstReady = false;
+      this.xterm.write(eraseTerminalLine, clear ? this.onClear : undefined);
+    };
+
+    this.viewport.addEventListener("scroll", this.onScroll);
+    this.elem.addEventListener("contextmenu", this.onContextMenu);
+    // `TerminalApi` emits "ready" once per connection, on its first output or
+    // on the "connected" of a resumed session.
+    this.api.on("ready", onReady);
+    this.api.on("data", this.onApiData);
+    this.api.on("status", this.onApiStatus);
+    window.addEventListener("resize", this.onResize);
+
+    this.disposer.push(
+      reaction(
+        () => this.dependencies.xtermColorTheme.get(),
+        (colors) => (this.xterm.options.theme = colors),
+        {
+          fireImmediately: true,
+        },
+      ),
+      reaction(() => this.fontSize, this.setFontSize, { fireImmediately: true }),
+      reaction(() => this.fontFamily, this.setFontFamily, { fireImmediately: true }),
+      () => onDataHandler.dispose(),
+      () => this.fitAddon.dispose(),
+      () => this.api.removeAllListeners(),
+      () => window.removeEventListener("resize", this.onResize),
+      () => this.elem.removeEventListener("contextmenu", this.onContextMenu),
+      this.xterm.onResize(({ cols, rows }) => {
+        this.api.sendTerminalSize(cols, rows);
+      }),
+    );
+  }
+
+  destroy() {
+    this.disposer();
+    this.xterm.dispose();
+  }
+
+  fit = () => this.fitAddon.fit();
+
+  fitLazy = debounce(this.fit, 250);
+
+  focus = () => {
+    this.xterm.focus();
+  };
+
+  onApiData = (data: string) => {
+    this.xterm.write(data);
+  };
+
+  onApiStatus = (data: string, level: TerminalStatusLevel) => {
+    if (level === "error") {
+      this.hasStickyStatus = true;
+    }
+
+    this.xterm.write(data);
+  };
+
+  onData = (data: string) => {
+    if (!this.api.isReady) return;
+    this.api.sendMessage({
+      type: TerminalChannels.STDIN,
+      data,
+    });
+  };
+
+  onScroll = () => {
+    this.scrollPos = this.viewport.scrollTop;
+  };
+
+  onClear = () => {
+    this.xterm.clear();
+  };
+
+  onResize = () => {
+    this.fitLazy();
+    this.focus();
+  };
+
+  onActivate = () => {
+    this.fit();
+    setTimeout(() => this.focus(), 250); // delay used to prevent focus on active tab
+    this.viewport.scrollTop = this.scrollPos; // restore last scroll position
+  };
+
+  onContextMenu = async () => {
+    // don't paste if user hasn't turned on the feature
+    if (!this.dependencies.terminalCopyOnSelect.get()) {
+      return;
+    }
+
+    try {
+      const text = await navigator.clipboard.readText();
+
+      // don't paste if the clipboard doesn't have text
+      if (text) {
+        this.xterm.paste(text);
+      }
+    } catch (error) {
+      this.dependencies.logger.warn("[TERMINAL]: failed to read the clipboard", error);
+    }
+  };
+
+  onSelectionChange = () => {
+    const selection = this.xterm.getSelection().trim();
+
+    if (this.dependencies.terminalCopyOnSelect.get() && selection) {
+      navigator.clipboard.writeText(selection).catch((error) => {
+        this.dependencies.logger.warn("[TERMINAL]: failed to write the clipboard", error);
+      });
+    }
+  };
+
+  setFontSize = (fontSize: number) => {
+    this.dependencies.logger.debug(`[TERMINAL]: set fontSize to ${fontSize}`);
+
+    this.xterm.options.fontSize = fontSize;
+    this.fit();
+  };
+
+  setFontFamily = (fontFamily: string) => {
+    this.dependencies.logger.debug(`[TERMINAL]: set fontFamily to ${fontFamily}`);
+
+    this.xterm.options.fontFamily = fontFamily;
+    this.fit();
+
+    // provide css-variable within `:root {}`
+    document.documentElement.style.setProperty("--font-terminal", fontFamily);
+  };
+
+  keyHandler = (evt: KeyboardEvent): boolean => {
+    const { code, ctrlKey, metaKey } = evt;
+
+    if (this.dependencies.isMac) {
+      if (!handleMacNaturalTextEditingKey(evt, this.onData)) {
+        return false;
+      }
+    }
+
+    // Handle custom hotkey bindings
+    if (ctrlKey) {
+      switch (code) {
+        // Ctrl+C: prevent terminal exit on windows / linux (?)
+        case "KeyC":
+          if (this.xterm.hasSelection()) return false;
+          break;
+
+        // Ctrl+W: prevent unexpected terminal tab closing, e.g. editing file in vim
+        case "KeyW":
+          evt.preventDefault();
+          break;
+      }
+    }
+
+    //Ctrl+K: clear the entire buffer, making the prompt line the new first line on mac os
+    if (this.dependencies.isMac && metaKey) {
+      switch (code) {
+        case "KeyK":
+          this.onClear();
+          break;
+      }
+    }
+
+    return true;
+  };
+}

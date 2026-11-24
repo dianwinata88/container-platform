@@ -1,0 +1,115 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import { constants } from "node:fs";
+// Imported for its type: without DOM, the global TextDecoder of @types/node is a value only
+import { TextDecoder } from "node:util";
+import { bytesToUnits, noop } from "@freelensapp/utilities";
+import { getInjectable } from "@ogre-tools/injectable";
+import createReadFileStreamInjectable from "../../../common/fs/create-read-file-stream.injectable";
+import { getKubeconfigEncoding } from "../../../common/kube-helpers/read-kubeconfig-file.injectable";
+import computeKubeconfigDiffInjectable from "./compute-diff.injectable";
+import kubeconfigSyncLoggerInjectable from "./logger.injectable";
+import type { Stats } from "node:fs";
+import type { Readable } from "node:stream";
+
+import type { Disposer } from "@freelensapp/utilities";
+
+import type { ObservableMap } from "mobx";
+
+import type { CatalogEntity } from "../../../common/catalog";
+import type { Cluster } from "../../../common/cluster/cluster";
+
+export interface DiffChangedKubeconfigArgs {
+  filePath: string;
+  source: ObservableMap<string, [Cluster, CatalogEntity]>;
+  stats: Stats;
+  maxAllowedFileReadSize: number;
+}
+export type DiffChangedKubeconfig = (args: DiffChangedKubeconfigArgs) => Disposer;
+
+const diffChangedKubeconfigInjectable = getInjectable({
+  id: "diff-changed-kubeconfig",
+  instantiate: (di): DiffChangedKubeconfig => {
+    const computeKubeconfigDiff = di.inject(computeKubeconfigDiffInjectable);
+    const logger = di.inject(kubeconfigSyncLoggerInjectable);
+    const createReadFileStream = di.inject(createReadFileStreamInjectable);
+
+    return ({ filePath, maxAllowedFileReadSize, source, stats }) => {
+      logger.debug(`file changed`, { filePath });
+
+      if (stats.size >= maxAllowedFileReadSize) {
+        logger.warn(
+          `skipping ${filePath}: size=${bytesToUnits(stats.size)} is larger than maxSize=${bytesToUnits(maxAllowedFileReadSize)}`,
+        );
+        source.clear();
+
+        return noop;
+      }
+
+      const fileReader = createReadFileStream(filePath, {
+        mode: constants.O_RDONLY,
+      });
+      const readStream = fileReader as Readable;
+      let decoder: TextDecoder | undefined;
+      let fileString = "";
+      let closed = false;
+
+      const cleanup = () => {
+        closed = true;
+        fileReader.close(); // This may not close the stream.
+        // Artificially marking end-of-stream, as if the underlying resource had
+        // indicated end-of-file by itself, allows the stream to close.
+        // This does not cancel pending read operations, and if there is such an
+        // operation, the process may still not be able to exit successfully
+        // until it finishes.
+        fileReader.push(null);
+        fileReader.read(0);
+        readStream.removeAllListeners();
+      };
+
+      readStream
+        .on("data", (chunk: Buffer) => {
+          try {
+            decoder ??= new TextDecoder(getKubeconfigEncoding(chunk), { fatal: true });
+            fileString += decoder.decode(chunk, { stream: true });
+          } catch (error) {
+            logger.warn(`skipping ${filePath}: ${error}`);
+            source.clear();
+            cleanup();
+          }
+        })
+        .on("close", () => cleanup())
+        .on("error", (error) => {
+          cleanup();
+          logger.warn(`failed to read file: ${error}`, { filePath });
+        })
+        .on("end", () => {
+          if (closed) {
+            return;
+          }
+
+          try {
+            // Flushes a character the last chunk left unfinished, which a
+            // fatal decoder reports here rather than dropping it.
+            fileString += decoder?.decode() ?? "";
+          } catch (error) {
+            logger.warn(`skipping ${filePath}: ${error}`);
+            source.clear();
+            cleanup();
+
+            return;
+          }
+
+          computeKubeconfigDiff(fileString, source, filePath);
+        });
+
+      return cleanup;
+    };
+  },
+});
+
+export default diffChangedKubeconfigInjectable;

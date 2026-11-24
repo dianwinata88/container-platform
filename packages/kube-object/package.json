@@ -1,0 +1,41 @@
+{
+  "name": "@freelensapp/kube-object",
+  "version": "2.1.1-0",
+  "private": true,
+  "description": "Injection tokens for list layout",
+  "homepage": "https://freelens.app",
+  "bugs": {
+    "url": "https://github.com/freelensapp/freelens/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/freelensapp/freelens.git"
+  },
+  "license": "MIT",
+  "type": "module",
+  "author": {
+    "name": "Freelens Authors",
+    "email": "freelens@freelens.app"
+  },
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "scripts": {
+    "clean:dist": "pnpm dlx rimraf@6.1.4 dist",
+    "test:unit": "vitest run -c ../../vitest.config.ts --project @freelensapp/kube-object"
+  },
+  "dependencies": {
+    "@freelensapp/type-fest": "workspace:^",
+    "@freelensapp/utilities": "workspace:^",
+    "auto-bind": "catalog:",
+    "es-toolkit": "catalog:"
+  },
+  "devDependencies": {
+    "@freelensapp/typescript": "workspace:^",
+    "jsdom": "catalog:",
+    "vitest": "catalog:"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

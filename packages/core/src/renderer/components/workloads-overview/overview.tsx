@@ -1,0 +1,156 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import "./overview.scss";
+
+import { Icon } from "@freelensapp/icon";
+import { TooltipPosition } from "@freelensapp/tooltip";
+import { withInjectables } from "@ogre-tools/injectable-react";
+import { observable, reaction } from "mobx";
+import { observer } from "mobx-react";
+import React from "react";
+import clusterFrameContextForNamespacedResourcesInjectable from "../../cluster-frame-context/for-namespaced-resources.injectable";
+import subscribeStoresInjectable from "../../kube-watch-api/subscribe-stores.injectable";
+import eventStoreInjectable from "../events/store.injectable";
+import { SiblingsInTabLayout } from "../layout/siblings-in-tab-layout";
+import { NamespaceSelectFilter } from "../namespaces/namespace-select-filter";
+import cronJobStoreInjectable from "../workloads-cronjobs/store.injectable";
+import daemonSetStoreInjectable from "../workloads-daemonsets/store.injectable";
+import deploymentStoreInjectable from "../workloads-deployments/store.injectable";
+import jobStoreInjectable from "../workloads-jobs/store.injectable";
+import podStoreInjectable from "../workloads-pods/store.injectable";
+import replicaSetStoreInjectable from "../workloads-replicasets/store.injectable";
+import statefulSetStoreInjectable from "../workloads-statefulsets/store.injectable";
+import workloadOverviewDetailsInjectable from "./workload-overview-details/workload-overview-details.injectable";
+
+import type { IComputedValue } from "mobx";
+
+import type { ClusterContext } from "../../cluster-frame-context/cluster-frame-context";
+import type { SubscribeStores } from "../../kube-watch-api/kube-watch-api";
+import type { EventStore } from "../events/store";
+import type { CronJobStore } from "../workloads-cronjobs/store";
+import type { DaemonSetStore } from "../workloads-daemonsets/store";
+import type { DeploymentStore } from "../workloads-deployments/store";
+import type { JobStore } from "../workloads-jobs/store";
+import type { PodStore } from "../workloads-pods/store";
+import type { ReplicaSetStore } from "../workloads-replicasets/store";
+import type { StatefulSetStore } from "../workloads-statefulsets/store";
+
+interface Dependencies {
+  detailComponents: IComputedValue<React.ElementType<{}>[]>;
+  clusterFrameContext: ClusterContext;
+  subscribeStores: SubscribeStores;
+  podStore: PodStore;
+  daemonSetStore: DaemonSetStore;
+  replicaSetStore: ReplicaSetStore;
+  deploymentStore: DeploymentStore;
+  jobStore: JobStore;
+  cronJobStore: CronJobStore;
+  statefulSetStore: StatefulSetStore;
+  eventStore: EventStore;
+}
+
+@observer
+class NonInjectedWorkloadsOverview extends React.Component<Dependencies> {
+  private readonly disposers: (() => void)[] = [];
+  @observable accessor loadErrors: string[] = [];
+
+  constructor(props: Dependencies) {
+    super(props);
+  }
+
+  componentDidMount() {
+    // Capture props before the reaction: mobx-react 9 forbids reading this.props
+    // inside a derivation (the reaction's data function below).
+    const { clusterFrameContext } = this.props;
+
+    this.disposers.push(
+      this.props.subscribeStores(
+        [
+          this.props.cronJobStore,
+          this.props.daemonSetStore,
+          this.props.deploymentStore,
+          this.props.eventStore,
+          this.props.jobStore,
+          this.props.podStore,
+          this.props.replicaSetStore,
+          this.props.statefulSetStore,
+        ],
+        {
+          onLoadFailure: (error) => this.loadErrors.push(String(error)),
+        },
+      ),
+      reaction(
+        () => clusterFrameContext.contextNamespaces.slice(),
+        () => {
+          // clear load errors
+          this.loadErrors.length = 0;
+        },
+      ),
+    );
+  }
+
+  componentWillUnmount() {
+    this.disposers.forEach((dispose) => dispose());
+  }
+
+  renderLoadErrors() {
+    if (this.loadErrors.length === 0) {
+      return null;
+    }
+
+    return (
+      <Icon
+        material="warning"
+        className="load-error"
+        tooltip={{
+          children: (
+            <>
+              {this.loadErrors.map((error, index) => (
+                <p key={index}>{error}</p>
+              ))}
+            </>
+          ),
+          preferredPositions: TooltipPosition.BOTTOM,
+        }}
+      />
+    );
+  }
+
+  render() {
+    return (
+      <SiblingsInTabLayout scrollable>
+        <div className="WorkloadsOverview flex flex-col gap-4" data-testid="page-for-workloads-overview">
+          <div className="header flex gap-4 items-center">
+            <h5 className="grow shrink-0 basis-0">Overview</h5>
+            {this.renderLoadErrors()}
+            <NamespaceSelectFilter id="overview-namespace-select-filter-input" />
+          </div>
+
+          {this.props.detailComponents.get().map((Details, index) => (
+            <Details key={`workload-overview-${index}`} />
+          ))}
+        </div>
+      </SiblingsInTabLayout>
+    );
+  }
+}
+
+export const WorkloadsOverview = withInjectables<Dependencies>(NonInjectedWorkloadsOverview, {
+  getProps: (di) => ({
+    detailComponents: di.inject(workloadOverviewDetailsInjectable),
+    clusterFrameContext: di.inject(clusterFrameContextForNamespacedResourcesInjectable),
+    subscribeStores: di.inject(subscribeStoresInjectable),
+    daemonSetStore: di.inject(daemonSetStoreInjectable),
+    podStore: di.inject(podStoreInjectable),
+    replicaSetStore: di.inject(replicaSetStoreInjectable),
+    cronJobStore: di.inject(cronJobStoreInjectable),
+    deploymentStore: di.inject(deploymentStoreInjectable),
+    jobStore: di.inject(jobStoreInjectable),
+    statefulSetStore: di.inject(statefulSetStoreInjectable),
+    eventStore: di.inject(eventStoreInjectable),
+  }),
+});

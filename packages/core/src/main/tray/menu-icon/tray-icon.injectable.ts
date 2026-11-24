@@ -1,0 +1,32 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+import { getInjectable } from "@ogre-tools/injectable";
+import { sortBy } from "es-toolkit";
+import { computed } from "mobx";
+import { trayIconInjectionToken } from "./tray-icon-injection-token";
+
+const trayIconInjectable = getInjectable({
+  id: "tray-icon",
+
+  instantiate: (di) => {
+    const availableIcons = di.injectMany(trayIconInjectionToken);
+
+    return computed(() => {
+      const mostPrioritizedIcon = sortBy(availableIcons, [(icon) => icon.priority]).find((icon) =>
+        icon.shouldBeShown.get(),
+      );
+
+      if (!mostPrioritizedIcon) {
+        throw new Error("There should always be tray icon which is shown.");
+      }
+
+      return mostPrioritizedIcon;
+    });
+  },
+});
+
+export default trayIconInjectable;

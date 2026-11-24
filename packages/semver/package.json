@@ -1,0 +1,34 @@
+{
+  "name": "@freelensapp/semver",
+  "version": "2.1.1-0",
+  "private": true,
+  "description": "CLI over verkit package for picking parts of a version",
+  "homepage": "https://freelens.app",
+  "bugs": {
+    "url": "https://github.com/freelensapp/freelens/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/freelensapp/freelens.git"
+  },
+  "license": "MIT",
+  "author": {
+    "name": "Freelens Authors",
+    "email": "freelens@freelens.app"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "tsc --pretty --project .",
+    "build:dev": "tsc --pretty --project .",
+    "clean:dist": "pnpm dlx rimraf@6.1.4 dist"
+  },
+  "dependencies": {
+    "command-line-args": "catalog:",
+    "verkit": "catalog:"
+  },
+  "devDependencies": {
+    "@types/command-line-args": "catalog:",
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  }
+}

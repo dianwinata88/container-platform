@@ -1,0 +1,26 @@
+/**
+ * Copyright (c) Freelens Authors. All rights reserved.
+ * Copyright (c) OpenLens Authors. All rights reserved.
+ * Licensed under MIT License. See LICENSE in root directory for more information.
+ */
+
+@use "@xterm/xterm/css/xterm.css" as *;
+
+.TerminalWindow {
+  --vscode-scrollbar-shadow: transparent;
+
+  flex: 1;
+  overflow: hidden;
+
+  .terminal.xterm {
+    padding: calc(var(--padding) * 2);
+
+    // xterm v5 set .xterm-viewport background-color via JS to match the theme.
+    // xterm v6 no longer does this (background is applied to the new custom
+    // scrollable element instead), leaving the CSS default (#000) intact.
+    // Override to transparent so the parent container's background shows through.
+    .xterm-viewport {
+      background-color: transparent !important;
+    }
+  }
+}

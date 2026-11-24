@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "composite": true,
+    "outDir": "static/build/library/"
+  },
+  "include": ["package.json", "src/**/*", "types/*.d.ts"],
+  "exclude": ["node_modules"]
+}
